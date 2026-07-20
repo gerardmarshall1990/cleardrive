@@ -1,0 +1,32 @@
+{
+  "name": "cleardrive-backend",
+  "version": "1.0.0",
+  "description": "ClearDrive vehicle escrow platform - backend API",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.112.3",
+    "@supabase/supabase-js": "^2.110.7",
+    "axios": "^1.18.1",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-validator": "^7.3.2",
+    "form-data": "^4.0.6",
+    "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "morgan": "^1.11.0",
+    "multer": "^2.2.0",
+    "node-cron": "^4.6.0",
+    "pdfkit": "^0.19.1",
+    "uuid": "^14.0.1"
+  }
+}

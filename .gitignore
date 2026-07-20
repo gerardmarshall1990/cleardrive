@@ -1,0 +1,12 @@
+node_modules/
+.env
+.env.local
+*.log
+dist/
+build/
+.expo/
+backend/generated-docs/*.pdf
+.DS_Store
+backend/e2e_users.json
+backend/.e2e_env
+.claude/settings.local.json
