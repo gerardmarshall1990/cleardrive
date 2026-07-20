@@ -17,13 +17,16 @@ router.post(
   requireAuth,
   [
     body('product').isIn(['loanclear', 'safepay']),
-    body('sellerId').isUUID(),
+    body('sellerId').optional().isUUID(),
+    body('sellerPhone').optional().isString(),
     body('plate').isString().notEmpty(),
     body('salePrice').isFloat({ gt: 0 }),
   ],
   validate,
   asyncHandler(dealController.createDeal)
 );
+
+router.get('/mine', requireAuth, asyncHandler(dealController.listMine));
 
 router.get('/:id', requireAuth, asyncHandler(dealController.getDeal));
 
@@ -44,6 +47,8 @@ router.post(
 );
 
 router.patch('/:id/details', requireAuth, asyncHandler(dealController.updateDetails));
+
+router.patch('/:id/buyer', requireAuth, [body('buyerPhone').isString().notEmpty()], validate, asyncHandler(dealController.attachBuyer));
 
 router.post('/:id/generate-docs', requireAuth, asyncHandler(dealController.generateDocs));
 

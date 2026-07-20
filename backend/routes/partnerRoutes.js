@@ -20,6 +20,9 @@ router.post(
   asyncHandler(partnerController.createPartner)
 );
 
+router.get('/mine', requireAuth, asyncHandler(partnerController.getMyPartner));
+router.get('/mine/deals', requireAuth, asyncHandler(partnerController.getMyPartnerDeals));
+
 router.get('/:id', requireAuth, asyncHandler(partnerController.getPartner));
 router.get('/:id/deals', requireAuth, asyncHandler(partnerController.getPartnerDeals));
 

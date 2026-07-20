@@ -1,0 +1,96 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@600;700;800&display=swap');
+@import 'tailwindcss';
+
+/* ClearDrive design tokens — from Design Guidelines doc */
+@theme {
+  --font-display: 'Playfair Display', serif;
+  --font-sans: 'Inter', sans-serif;
+
+  --color-navy: #0d2a4a;
+  --color-navy-dark: #091828;
+  --color-navy-mid: #16395e;
+  --color-gold: #c9a84c;
+  --color-gold-hover: #ddbe6e;
+  --color-green: #16a34a;
+  --color-cream: #f8f5ef;
+  --color-dark-text: #1e293b;
+  --color-muted: #64748b;
+  --color-border: #e8e2d3;
+  --color-error: #dc2626;
+  --color-success: #16a34a;
+
+  --shadow-sm-cd: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-md-cd: 0 4px 16px rgba(0, 0, 0, 0.1);
+  --shadow-lg-cd: 0 8px 32px rgba(0, 0, 0, 0.12);
+  --shadow-gold: 0 8px 24px rgba(201, 168, 76, 0.2);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: 'Inter', sans-serif;
+  background: #0d2a4a;
+  color: #ffffff;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: 'Playfair Display', serif;
+  margin: 0;
+}
+
+button {
+  font-family: 'Inter', sans-serif;
+  cursor: pointer;
+}
+
+input,
+select,
+textarea {
+  font-family: 'Inter', sans-serif;
+}
+
+/* Skeleton shimmer for loading states, per guidelines */
+@keyframes cd-shimmer {
+  0% {
+    background-position: -400px 0;
+  }
+  100% {
+    background-position: 400px 0;
+  }
+}
+
+.cd-skeleton {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.04) 25%,
+    rgba(255, 255, 255, 0.08) 37%,
+    rgba(255, 255, 255, 0.04) 63%
+  );
+  background-size: 800px 100%;
+  animation: cd-shimmer 1.5s linear infinite;
+  border-radius: 8px;
+}
+
+/* Verified badge pulse-once, per guidelines micro-interactions */
+@keyframes cd-pulse-once {
+  0% {
+    box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.4);
+  }
+  100% {
+    box-shadow: 0 0 0 10px rgba(22, 163, 74, 0);
+  }
+}
+
+.cd-verified-pulse {
+  animation: cd-pulse-once 0.6s ease-out;
+}

@@ -25,6 +25,30 @@ async function createPartner(req, res) {
   return res.status(201).json({ partner });
 }
 
+/**
+ * Looks up the calling dealer/broker's own partner row. There's no partners.user_id
+ * column, so the link is by phone number (set to match at signup — see authController.js).
+ */
+async function findMyPartner(appUser) {
+  return supabaseAdmin.from('partners').select('*').eq('phone', appUser.phone).eq('type', appUser.role).maybeSingle();
+}
+
+/** GET /api/partners/mine — the calling dealer/broker's own partner profile. */
+async function getMyPartner(req, res) {
+  const { data: partner, error } = await findMyPartner(req.appUser);
+  if (error || !partner) return res.status(404).json({ error: 'No partner profile found for this account' });
+  return res.json({ partner });
+}
+
+/** GET /api/partners/mine/deals — the calling dealer/broker's referred deals + earnings. */
+async function getMyPartnerDeals(req, res) {
+  const { data: partner, error: partnerErr } = await findMyPartner(req.appUser);
+  if (partnerErr || !partner) return res.status(404).json({ error: 'No partner profile found for this account' });
+
+  req.params.id = partner.id;
+  return getPartnerDeals(req, res);
+}
+
 /** GET /api/partners/:id */
 async function getPartner(req, res) {
   const { data: partner, error } = await supabaseAdmin.from('partners').select('*').eq('id', req.params.id).single();
@@ -65,4 +89,4 @@ function isThisMonth(dateStr) {
   return d.getUTCFullYear() === now.getUTCFullYear() && d.getUTCMonth() === now.getUTCMonth();
 }
 
-module.exports = { createPartner, getPartner, getPartnerDeals };
+module.exports = { createPartner, getPartner, getPartnerDeals, getMyPartner, getMyPartnerDeals };

@@ -1,0 +1,68 @@
+services:
+  - type: web
+    name: cleardrive-backend
+    runtime: node
+    rootDir: backend
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 4000
+      - key: NODE_ENV
+        value: production
+      - key: TIMEZONE
+        value: Asia/Dubai
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: SIGNNOW_BASE_URL
+        value: https://api.signnow.com
+      - key: SIGNNOW_EMAIL
+        sync: false
+      - key: SIGNNOW_PASSWORD
+        sync: false
+      - key: SIGNNOW_CLIENT_ID
+        sync: false
+      - key: SIGNNOW_CLIENT_SECRET
+        sync: false
+      - key: TRUSTIN_API_KEY
+        sync: false
+      - key: TRUSTIN_BASE_URL
+        sync: false
+      - key: TRUSTIN_MOCK_MODE
+        value: "true"
+      - key: WHATSAPP_API_KEY
+        sync: false
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+      - key: WHATSAPP_MOCK_MODE
+        value: "true"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: COMPANY_NAME
+        sync: false
+      - key: COMPANY_REGISTRATION
+        sync: false
+      - key: COMPANY_SIGNATORY
+        sync: false
+      - key: COMPANY_EMAIL
+        sync: false
+      - key: COMPANY_PHONE
+        sync: false
+      - key: COMPANY_WEBSITE
+        sync: false
+      - key: COMPANY_IBAN
+        sync: false
+      - key: COMPANY_ACCOUNT_NAME
+        sync: false
+      - key: COMPANY_BANK
+        sync: false
+      - key: ESCROW_PARTNER_NAME
+        sync: false

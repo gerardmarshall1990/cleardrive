@@ -8,6 +8,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 
+const authRoutes = require('./routes/authRoutes');
 const dealRoutes = require('./routes/dealRoutes');
 const partnerRoutes = require('./routes/partnerRoutes');
 const adminRoutes = require('./routes/adminRoutes');
@@ -33,6 +34,7 @@ app.use(express.urlencoded({ extended: true }));
 
 app.get('/health', (req, res) => res.json({ status: 'ok', service: 'cleardrive-backend', time: new Date().toISOString() }));
 
+app.use('/api/auth', authRoutes);
 app.use('/api/deals', dealRoutes);
 app.use('/api/partners', partnerRoutes);
 app.use('/api/admin', adminRoutes);
