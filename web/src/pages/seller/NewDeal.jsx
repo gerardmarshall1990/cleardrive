@@ -9,25 +9,37 @@ import { UAE_BANKS } from '../../lib/banks';
 import { calculateLoanClearFee, calculateSafePayFee, calculateNetProceeds, formatAed } from '../../lib/feeCalculator';
 import { STAGES } from '../../lib/dealStages';
 import { api } from '../../lib/api';
+import { useAuth } from '../../lib/AuthContext';
 
 const SAFEPAY_MIN = 100000;
 
+// Single "Create Deal" form for both sides of the trade — no separate
+// seller-only vs buyer-only creation code paths. The account's own role
+// (fixed at signup) decides which fields matter and who the join link goes
+// to; everything else is shared. The moment the deal is created, an invite
+// link is auto-sent (WhatsApp + email) to the other party so they can join
+// with zero extra steps on either side.
 export default function NewDeal() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [params] = useSearchParams();
-  const [product, setProduct] = useState(params.get('product') === 'safepay' ? 'safepay' : 'loanclear');
+  const role = user?.role === 'buyer' ? 'buyer' : 'seller';
+  const isBuyer = role === 'buyer';
 
+  const [product, setProduct] = useState(params.get('product') === 'safepay' ? 'safepay' : 'loanclear');
   const [plate, setPlate] = useState('');
   const [salePrice, setSalePrice] = useState('');
   const [loanAmount, setLoanAmount] = useState('');
   const [loanBank, setLoanBank] = useState(UAE_BANKS[0]);
-  const [buyerPhone, setBuyerPhone] = useState('');
+  const [otherPartyPhone, setOtherPartyPhone] = useState('');
+  const [otherPartyEmail, setOtherPartyEmail] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
   const salePriceNum = parseFloat(salePrice) || 0;
   const loanAmountNum = parseFloat(loanAmount) || 0;
   const accent = product === 'safepay' ? 'green' : 'gold';
+  const otherRoleLabel = isBuyer ? 'seller' : 'buyer';
 
   const { cdFee, netProceeds } = useMemo(() => {
     const fee = product === 'loanclear' ? calculateLoanClearFee(loanAmountNum) : calculateSafePayFee(salePriceNum);
@@ -40,9 +52,12 @@ export default function NewDeal() {
     setError('');
 
     if (!plate.trim()) return setError('Plate number is required');
-    if (!salePriceNum || salePriceNum <= 0) return setError('Enter a valid sale price');
+    if (!salePriceNum || salePriceNum <= 0) return setError(isBuyer ? 'Enter your proposed price' : 'Enter a valid sale price');
     if (product === 'safepay' && salePriceNum < SAFEPAY_MIN) return setError(`SafePay requires a minimum sale price of ${formatAed(SAFEPAY_MIN)}`);
-    if (product === 'loanclear' && (!loanAmountNum || loanAmountNum < 0)) return setError('Enter the approximate outstanding loan amount');
+    if (!isBuyer && product === 'loanclear' && (!loanAmountNum || loanAmountNum < 0)) return setError('Enter the approximate outstanding loan amount');
+    if (!otherPartyPhone.trim() && !otherPartyEmail.trim()) {
+      return setError(`Enter the ${otherRoleLabel}'s phone or email so we can send them the join link`);
+    }
 
     setLoading(true);
     try {
@@ -50,14 +65,18 @@ export default function NewDeal() {
         product,
         plate: plate.trim().toUpperCase(),
         salePrice: salePriceNum,
-        loanAmount: product === 'loanclear' ? loanAmountNum : undefined,
+        loanAmount: product === 'loanclear' && loanAmountNum ? loanAmountNum : undefined,
         loanBank: product === 'loanclear' ? loanBank : undefined,
-        buyerPhone: buyerPhone.trim() || undefined,
+        otherPartyPhone: otherPartyPhone.trim() || undefined,
+        otherPartyEmail: otherPartyEmail.trim() || undefined,
       });
-      // Required fields to leave "quote" (plate, sale_price, seller_id) are already
-      // satisfied at creation, so advance immediately into fines verification.
-      await api.put(`/api/deals/${deal.id}/stage`, { targetStage: STAGES.FINES_VERIFY });
-      navigate(`/seller/deals/${deal.id}`);
+      // Required fields to leave "quote" (plate, sale_price, seller_id) are only
+      // satisfied once a seller is attached — a buyer-created deal stays at QUOTE
+      // until the invited seller joins, so only advance the stage when we're the seller.
+      if (!isBuyer) {
+        await api.put(`/api/deals/${deal.id}/stage`, { targetStage: STAGES.FINES_VERIFY });
+      }
+      navigate(isBuyer ? `/buyer/deals/${deal.id}` : `/seller/deals/${deal.id}`);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -68,11 +87,22 @@ export default function NewDeal() {
   return (
     <div className="mx-auto max-w-lg">
       <ProgressSteps currentStage={STAGES.QUOTE} accent={accent} />
-      <h2 className="mt-6 font-display text-2xl font-bold text-white">Get your quote</h2>
-      <p className="mt-1 text-sm text-white/50">Tell us about the car and sale — we'll calculate your net proceeds instantly.</p>
+      <h2 className="mt-6 font-display text-2xl font-bold text-white">
+        {isBuyer ? 'Propose a deal' : 'Get your quote'}
+      </h2>
+      <p className="mt-1 text-sm text-white/50">
+        {isBuyer
+          ? "Tell us what you've agreed with the seller — they'll confirm the exact figures once they join."
+          : "Tell us about the car and sale — we'll calculate your net proceeds instantly."}
+      </p>
 
       <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-5">
         <ErrorBanner message={error} />
+
+        <DarkCard className="!p-3 !bg-white/[0.03]">
+          <p className="text-xs uppercase tracking-wide text-white/40 font-sans font-bold">You are the</p>
+          <p className="mt-1 text-sm font-semibold text-white capitalize">{role}</p>
+        </DarkCard>
 
         <Select label="Product" value={product} onChange={(e) => setProduct(e.target.value)}>
           <option value="loanclear" className="bg-navy">LoanClear — car has a bank loan</option>
@@ -82,7 +112,7 @@ export default function NewDeal() {
         <Input label="Plate number" placeholder="e.g. A 12345" value={plate} onChange={(e) => setPlate(e.target.value)} required />
 
         <Input
-          label="Agreed sale price (AED)"
+          label={isBuyer ? 'Proposed sale price (AED)' : 'Agreed sale price (AED)'}
           type="number"
           min="0"
           value={salePrice}
@@ -100,23 +130,35 @@ export default function NewDeal() {
               ))}
             </Select>
             <Input
-              label="Approximate outstanding loan amount (AED)"
+              label={isBuyer ? 'Outstanding loan amount, if known (AED)' : 'Approximate outstanding loan amount (AED)'}
               type="number"
               min="0"
               value={loanAmount}
               onChange={(e) => setLoanAmount(e.target.value)}
-              required
+              required={!isBuyer}
             />
           </>
         )}
 
-        <Input
-          label="Buyer's phone (optional — they must already have a ClearDrive account)"
-          type="tel"
-          placeholder="+9715XXXXXXXX"
-          value={buyerPhone}
-          onChange={(e) => setBuyerPhone(e.target.value)}
-        />
+        <div className="rounded-lg border border-white/8 bg-white/4 p-4">
+          <p className="text-sm text-white/70 mb-3 capitalize">{otherRoleLabel}'s contact — we'll send them a join link right away</p>
+          <div className="flex flex-col gap-3">
+            <Input
+              label={`${otherRoleLabel === 'seller' ? "Seller's" : "Buyer's"} phone`}
+              type="tel"
+              placeholder="+9715XXXXXXXX"
+              value={otherPartyPhone}
+              onChange={(e) => setOtherPartyPhone(e.target.value)}
+            />
+            <Input
+              label={`${otherRoleLabel === 'seller' ? "Seller's" : "Buyer's"} email`}
+              type="email"
+              placeholder="name@example.com"
+              value={otherPartyEmail}
+              onChange={(e) => setOtherPartyEmail(e.target.value)}
+            />
+          </div>
+        </div>
 
         <DarkCard>
           <div className="flex flex-col gap-2 text-sm font-sans">
@@ -127,7 +169,7 @@ export default function NewDeal() {
           </div>
           <div className="my-3 border-t border-white/10" />
           <GoldCard className="!bg-transparent !border-0 !p-0 flex items-center justify-between">
-            <span className="text-sm font-semibold text-white/70">Your Net Proceeds</span>
+            <span className="text-sm font-semibold text-white/70">{isBuyer ? 'Estimated Net Proceeds (seller)' : 'Your Net Proceeds'}</span>
             <span className={`font-display text-2xl font-bold ${accent === 'green' ? 'text-green' : 'text-gold'}`}>
               {formatAed(netProceeds)}
             </span>
@@ -135,7 +177,7 @@ export default function NewDeal() {
         </DarkCard>
 
         <Button type="submit" variant={accent} loading={loading} className="w-full">
-          Get Started →
+          {isBuyer ? 'Send proposal →' : 'Get Started →'}
         </Button>
       </form>
     </div>

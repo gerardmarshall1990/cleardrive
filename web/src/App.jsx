@@ -5,6 +5,7 @@ import { AppShell } from './components/AppShell';
 import Welcome from './pages/Welcome';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
+import JoinDeal from './pages/JoinDeal';
 import MyDeals from './pages/seller/MyDeals';
 import NewDeal from './pages/seller/NewDeal';
 import DealDetail from './pages/seller/DealDetail';
@@ -24,6 +25,7 @@ function App() {
           <Route path="/" element={<Welcome />} />
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
+          <Route path="/join/:dealId/:role" element={<JoinDeal />} />
 
           <Route
             path="/seller"
@@ -62,6 +64,16 @@ function App() {
               <ProtectedRoute roles={['buyer']}>
                 <AppShell>
                   <BuyerMyDeals />
+                </AppShell>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/buyer/new"
+            element={
+              <ProtectedRoute roles={['buyer']}>
+                <AppShell>
+                  <NewDeal />
                 </AppShell>
               </ProtectedRoute>
             }

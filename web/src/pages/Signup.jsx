@@ -5,6 +5,7 @@ import { Input, Select } from '../components/Input';
 import { Button } from '../components/Button';
 import { ErrorBanner } from '../components/Alert';
 import { useAuth } from '../lib/AuthContext';
+import { api } from '../lib/api';
 
 const ROLE_LABELS = { seller: 'Seller', buyer: 'Buyer', dealer: 'Dealer', broker: 'Broker' };
 
@@ -13,11 +14,13 @@ export default function Signup() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const product = params.get('product');
+  const joinDeal = params.get('joinDeal');
 
   const [role, setRole] = useState(params.get('role') || 'seller');
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
+  const [emiratesId, setEmiratesId] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -27,9 +30,18 @@ export default function Signup() {
     setError('');
     setLoading(true);
     try {
-      const user = await signup({ email, password, fullName, phone, role });
+      const user = await signup({ email, password, fullName, phone, role, emiratesId: emiratesId.trim() || undefined });
+
+      // Arrived via a join link — attach to the deal immediately on signup
+      // completion and land directly inside it. No separate attach step.
+      if (joinDeal) {
+        const { deal } = await api.post(`/api/deals/${joinDeal}/join`, { role });
+        navigate(role === 'seller' ? `/seller/deals/${deal.id}` : `/buyer/deals/${deal.id}`);
+        return;
+      }
+
       if (user.role === 'seller') navigate(product ? `/seller/new?product=${product}` : '/seller/new');
-      else if (user.role === 'buyer') navigate('/buyer');
+      else if (user.role === 'buyer') navigate('/buyer/new');
       else navigate('/partner');
     } catch (err) {
       setError(err.message);
@@ -42,10 +54,12 @@ export default function Signup() {
     <div className="flex min-h-screen flex-col items-center justify-center bg-navy px-6 py-12">
       <Logo />
       <form onSubmit={handleSubmit} className="mt-10 w-full max-w-sm flex flex-col gap-5">
-        <h2 className="text-center text-white font-display text-xl">Create your account</h2>
+        <h2 className="text-center text-white font-display text-xl">
+          {joinDeal ? 'Join the deal — create your account' : 'Create your account'}
+        </h2>
         <ErrorBanner message={error} />
 
-        <Select label="I am a..." value={role} onChange={(e) => setRole(e.target.value)}>
+        <Select label="I am a..." value={role} onChange={(e) => setRole(e.target.value)} disabled={!!joinDeal}>
           {Object.entries(ROLE_LABELS).map(([value, label]) => (
             <option key={value} value={value} className="bg-navy">
               {label}
@@ -57,6 +71,12 @@ export default function Signup() {
         <Input label="Phone" type="tel" placeholder="+9715XXXXXXXX" value={phone} onChange={(e) => setPhone(e.target.value)} required />
         <Input label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
         <Input
+          label="Emirates ID number (optional)"
+          placeholder="784-XXXX-XXXXXXX-X"
+          value={emiratesId}
+          onChange={(e) => setEmiratesId(e.target.value)}
+        />
+        <Input
           label="Password"
           type="password"
           value={password}
@@ -66,11 +86,11 @@ export default function Signup() {
         />
 
         <Button type="submit" loading={loading} className="w-full">
-          Create account
+          {joinDeal ? 'Create account & join deal' : 'Create account'}
         </Button>
         <p className="text-center text-sm text-white/50">
           Already have an account?{' '}
-          <Link to="/login" className="text-gold hover:underline">
+          <Link to={joinDeal ? `/login?role=${role}&joinDeal=${joinDeal}` : '/login'} className="text-gold hover:underline">
             Log in
           </Link>
         </p>

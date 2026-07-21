@@ -61,6 +61,10 @@ const templates = {
     `ClearDrive: Your ${deal.product === 'loanclear' ? 'LoanClear' : 'SafePay'} quote is ready — Deal ${deal.ref}. ` +
     `Estimated net proceeds: AED ${Number(deal.net_proceeds || 0).toLocaleString()}. Open the app to continue.`,
 
+  joinInvite: (deal, role, link) =>
+    `ClearDrive: You've been added as the ${role} on Deal ${deal.ref} (${deal.product === 'loanclear' ? 'LoanClear' : 'SafePay'}, plate ${deal.plate}). ` +
+    `Tap to open the deal: ${link}`,
+
   kycLinkSeller: (deal, link) => `ClearDrive: Deal ${deal.ref} — please complete your identity verification (UAE Pass): ${link}`,
 
   kycLinkBuyer: (deal, link) => `ClearDrive: You've been added as the buyer on Deal ${deal.ref}. Please verify your identity (UAE Pass): ${link}`,
@@ -89,6 +93,10 @@ const templates = {
 
 async function sendQuoteConfirmation(deal, sellerPhone) {
   return sendRaw(sellerPhone, templates.quoteConfirmation(deal), 'quote_confirmation', deal.id);
+}
+
+async function sendJoinInvite(deal, phone, role, link) {
+  return sendRaw(phone, templates.joinInvite(deal, role, link), `join_invite_${role}`, deal.id);
 }
 
 async function sendKycLink(deal, phone, party, link) {
@@ -135,6 +143,7 @@ module.exports = {
   sendRaw,
   templates,
   sendQuoteConfirmation,
+  sendJoinInvite,
   sendKycLink,
   sendSigningLink,
   sendEscrowPaymentInstruction,

@@ -1,14 +1,19 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Logo } from '../components/Logo';
 import { Input } from '../components/Input';
 import { Button } from '../components/Button';
 import { ErrorBanner } from '../components/Alert';
 import { useAuth } from '../lib/AuthContext';
+import { api } from '../lib/api';
 
 export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const joinDeal = params.get('joinDeal');
+  const joinRole = params.get('role');
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -20,6 +25,19 @@ export default function Login() {
     setLoading(true);
     try {
       const user = await login(email, password);
+
+      // Arrived via a join link — attach to the deal immediately and land
+      // directly inside it, instead of the generic role-based landing page.
+      if (joinDeal && joinRole) {
+        if (user.role !== joinRole) {
+          setError(`This invite is for a ${joinRole} account — you're logged in as a ${user.role}`);
+          return;
+        }
+        const { deal } = await api.post(`/api/deals/${joinDeal}/join`, { role: joinRole });
+        navigate(joinRole === 'seller' ? `/seller/deals/${deal.id}` : `/buyer/deals/${deal.id}`);
+        return;
+      }
+
       const dest = { seller: '/seller', buyer: '/buyer', dealer: '/partner', broker: '/partner', admin: '/admin' }[user.role] || '/';
       navigate(dest);
     } catch (err) {
@@ -42,7 +60,7 @@ export default function Login() {
         </Button>
         <p className="text-center text-sm text-white/50">
           No account?{' '}
-          <Link to="/signup" className="text-gold hover:underline">
+          <Link to={joinDeal ? `/signup?role=${joinRole}&joinDeal=${joinDeal}` : '/signup'} className="text-gold hover:underline">
             Sign up
           </Link>
         </p>

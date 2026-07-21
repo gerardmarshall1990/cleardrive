@@ -22,7 +22,12 @@ export default function BuyerMyDeals() {
 
   return (
     <div>
-      <h2 className="font-display text-2xl font-bold text-white mb-6">Deals to track</h2>
+      <div className="mb-6 flex items-center justify-between">
+        <h2 className="font-display text-2xl font-bold text-white">Deals to track</h2>
+        <Link to="/buyer/new" className="text-sm font-semibold text-gold hover:underline">
+          + Propose a deal
+        </Link>
+      </div>
 
       <ErrorBanner message={error} />
 
@@ -37,7 +42,7 @@ export default function BuyerMyDeals() {
         <EmptyState
           icon="📋"
           title="No deals yet"
-          subtitle="When a seller attaches you to a ClearDrive deal by your phone number, it'll show up here."
+          subtitle="Propose a deal yourself, or wait for a seller to send you a join link — either way it'll show up here."
         />
       )}
 

@@ -28,6 +28,14 @@ router.post(
 
 router.get('/mine', requireAuth, asyncHandler(dealController.listMine));
 
+router.post(
+  '/:id/join',
+  requireAuth,
+  [body('role').isIn(['seller', 'buyer'])],
+  validate,
+  asyncHandler(dealController.joinDeal)
+);
+
 router.get('/:id', requireAuth, asyncHandler(dealController.getDeal));
 
 router.put(

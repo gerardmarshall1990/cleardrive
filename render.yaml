@@ -44,6 +44,14 @@ services:
         sync: false
       - key: WHATSAPP_MOCK_MODE
         value: "true"
+      - key: APP_BASE_URL
+        sync: false # set to the live frontend domain (e.g. https://app.cleardriveuae.com) — used to build join/kyc/signing links
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: EMAIL_MOCK_MODE
+        value: "true"
       - key: JWT_SECRET
         generateValue: true
       - key: COMPANY_NAME
