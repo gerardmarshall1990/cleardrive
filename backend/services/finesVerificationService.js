@@ -55,8 +55,20 @@ async function verifyFinesScreenshot({ imageBase64, mediaType, expectedPlate }) 
     return { success: false, reason: 'Could not clearly read plate number and fines amount — please retry' };
   }
 
-  // Normalise plates for comparison: strip spaces/dashes, uppercase
-  const normalise = (p) => (p || '').toString().toUpperCase().replace(/[\s-]/g, '');
+  // Normalise plates for comparison: strip emirate name prefixes (RTA screenshots
+  // often show "Dubai A 12345" while the deal record just stores "A 12345"),
+  // strip spaces/dashes, uppercase.
+  const EMIRATE_PREFIXES = ['DUBAI', 'ABU DHABI', 'SHARJAH', 'AJMAN', 'RAS AL KHAIMAH', 'FUJAIRAH', 'UMM AL QUWAIN'];
+  const normalise = (p) => {
+    let v = (p || '').toString().toUpperCase().trim();
+    for (const prefix of EMIRATE_PREFIXES) {
+      if (v.startsWith(prefix)) {
+        v = v.slice(prefix.length).trim();
+        break;
+      }
+    }
+    return v.replace(/[\s-]/g, '');
+  };
   if (expectedPlate && normalise(extracted.plate) !== normalise(expectedPlate)) {
     return { success: false, reason: `Plate mismatch — screenshot shows ${extracted.plate}, expected ${expectedPlate}` };
   }
