@@ -46,6 +46,38 @@ router.post(
   asyncHandler(dealController.verifyFines)
 );
 
+router.post(
+  '/:id/extract-mulkiya',
+  requireAuth,
+  [body('imageBase64').isString().notEmpty()],
+  validate,
+  asyncHandler(dealController.extractMulkiya)
+);
+
+router.post(
+  '/:id/extract-settlement',
+  requireAuth,
+  [body('imageBase64').isString().notEmpty()],
+  validate,
+  asyncHandler(dealController.extractSettlement)
+);
+
+router.post(
+  '/:id/extract-eid',
+  requireAuth,
+  [body('imageBase64').isString().notEmpty()],
+  validate,
+  asyncHandler(dealController.extractEid)
+);
+
+router.patch(
+  '/:id/kyc',
+  requireAuth,
+  [body('fullName').isString().notEmpty(), body('eidNumber').isString().notEmpty()],
+  validate,
+  asyncHandler(dealController.confirmKyc)
+);
+
 router.patch('/:id/details', requireAuth, asyncHandler(dealController.updateDetails));
 
 router.patch('/:id/buyer', requireAuth, [body('buyerPhone').isString().notEmpty()], validate, asyncHandler(dealController.attachBuyer));

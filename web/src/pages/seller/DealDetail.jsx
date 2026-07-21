@@ -204,11 +204,90 @@ function KycCard({ deal, accent, onUpdate, onError }) {
         <PartyKycStatus label="Seller" complete={deal.seller_kyc_complete} />
         <PartyKycStatus label="Buyer" complete={deal.buyer_kyc_complete} note={!deal.buyer_id ? 'No buyer attached yet' : undefined} />
       </div>
+
+      {!deal.seller_kyc_complete && <EidVerifyForm deal={deal} onUpdate={onUpdate} onError={onError} />}
+
       <p className="mt-4 text-sm text-white/50">Both parties must complete identity verification before proceeding.</p>
       <Button variant={accent} loading={loading} disabled={!bothComplete} onClick={handleContinue} className="mt-4 w-full">
         {bothComplete ? 'Continue →' : 'Waiting for verification…'}
       </Button>
     </DarkCard>
+  );
+}
+
+// Emirates ID upload → Claude Vision extraction → editable review → explicit
+// confirm-and-lock via PATCH /:id/kyc. Extraction never auto-saves — the
+// extracted fields populate the form below for the user to check/edit before
+// they hit "Confirm". Manual typing (leaving the upload step unused) remains
+// a full fallback if extraction fails or the photo isn't available.
+function EidVerifyForm({ deal, onUpdate, onError }) {
+  const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({ fullName: '', eidNumber: '', nationality: '' });
+  const [extractMsg, setExtractMsg] = useState(null);
+
+  function set(field) {
+    return (e) => setForm((f) => ({ ...f, [field]: e.target.value }));
+  }
+
+  async function handleFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setBusy(true);
+    onError('');
+    setExtractMsg(null);
+    try {
+      const { base64, mediaType } = await fileToBase64(file);
+      const { data } = await api.post(`/api/deals/${deal.id}/extract-eid`, { imageBase64: base64, mediaType });
+      setForm({ fullName: data.fullName || '', eidNumber: data.eidNumber || '', nationality: data.nationality || '' });
+      setExtractMsg({ ok: true, text: 'Extracted from your Emirates ID — check the fields below and edit anything that looks wrong, then confirm.' });
+    } catch (err) {
+      setExtractMsg({ ok: false, text: `${err.message} — enter your details manually below.` });
+    } finally {
+      setBusy(false);
+      e.target.value = '';
+    }
+  }
+
+  async function handleConfirm(e) {
+    e.preventDefault();
+    if (!form.fullName.trim() || !form.eidNumber.trim()) return onError('Full name and Emirates ID number are required');
+    setSaving(true);
+    onError('');
+    try {
+      const { deal: updated } = await api.patch(`/api/deals/${deal.id}/kyc`, form);
+      onUpdate(updated);
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="mt-4 rounded-lg border border-white/8 bg-white/4 p-4">
+      <p className="text-sm text-white/70 mb-3">Your identity verification (Emirates ID)</p>
+      <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-gold/40 py-6 text-center hover:border-gold transition-colors">
+        {busy ? (
+          <span className="h-5 w-5 animate-spin rounded-full border-2 border-gold border-t-transparent" />
+        ) : (
+          <>
+            <span className="text-xl">📤</span>
+            <span className="text-xs text-white/60">Tap to upload your Emirates ID photo</span>
+          </>
+        )}
+        <input type="file" accept="image/*" className="hidden" onChange={handleFile} disabled={busy} />
+      </label>
+      {extractMsg && (extractMsg.ok ? <p className="mt-2 text-xs text-green">{extractMsg.text}</p> : <ErrorBanner message={extractMsg.text} />)}
+
+      <form onSubmit={handleConfirm} className="flex flex-col gap-3 mt-3">
+        <Input label="Full name" value={form.fullName} onChange={set('fullName')} />
+        <Input label="Emirates ID number" value={form.eidNumber} onChange={set('eidNumber')} />
+        <Button type="submit" variant="secondary" loading={saving} className="w-full">
+          Confirm & verify identity
+        </Button>
+      </form>
+    </div>
   );
 }
 
@@ -226,8 +305,30 @@ function PartyKycStatus({ label, complete, note }) {
 
 const EMIRATES = ['Dubai', 'Abu Dhabi', 'Sharjah', 'Ajman', 'Ras Al Khaimah', 'Fujairah', 'Umm Al Quwain'];
 
+// Shared upload dropzone for the two document-driven autofill flows below
+// (Mulkiya, settlement letter) — visually mirrors FinesVerifyCard's dropzone.
+function UploadDropzone({ label, busy, onFile }) {
+  return (
+    <div>
+      <p className="text-sm text-white/60 mb-2">{label}</p>
+      <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-gold/40 py-6 text-center hover:border-gold transition-colors">
+        {busy ? (
+          <span className="h-5 w-5 animate-spin rounded-full border-2 border-gold border-t-transparent" />
+        ) : (
+          <>
+            <span className="text-xl">📤</span>
+            <span className="text-xs text-white/60">Tap to upload photo</span>
+          </>
+        )}
+        <input type="file" accept="image/*" className="hidden" onChange={onFile} disabled={busy} />
+      </label>
+    </div>
+  );
+}
+
 function DetailsCard({ deal, accent, onUpdate, onError }) {
   const [form, setForm] = useState({
+    plate: deal.plate || '',
     vin: deal.vin || '',
     make: deal.make || '',
     model: deal.model || '',
@@ -235,16 +336,81 @@ function DetailsCard({ deal, accent, onUpdate, onError }) {
     colour: deal.colour || '',
     emirate: deal.emirate || EMIRATES[0],
     mileage: deal.mileage || '',
+    loan_amount: deal.loan_amount || '',
     loan_account: deal.loan_account || '',
+    loan_bank: deal.loan_bank || '',
     seller_iban: deal.seller_iban || '',
     seller_acc_name: deal.seller_acc_name || '',
     seller_proc_bank: deal.seller_proc_bank || '',
   });
   const [buyerPhone, setBuyerPhone] = useState('');
   const [loading, setLoading] = useState(false);
+  const [mulkiyaBusy, setMulkiyaBusy] = useState(false);
+  const [mulkiyaMsg, setMulkiyaMsg] = useState(null);
+  const [settlementBusy, setSettlementBusy] = useState(false);
+  const [settlementMsg, setSettlementMsg] = useState(null);
 
   function set(field) {
     return (e) => setForm((f) => ({ ...f, [field]: e.target.value }));
+  }
+
+  // Mulkiya upload → Claude Vision extraction → autofills the editable fields
+  // below (plate, VIN, make, model, year, colour). Nothing is saved until the
+  // seller reviews/edits and hits "Save & Continue" — extraction is the
+  // primary source, manual typing remains the fallback if it fails.
+  async function handleMulkiyaFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setMulkiyaBusy(true);
+    onError('');
+    setMulkiyaMsg(null);
+    try {
+      const { base64, mediaType } = await fileToBase64(file);
+      const { data } = await api.post(`/api/deals/${deal.id}/extract-mulkiya`, { imageBase64: base64, mediaType });
+      setForm((f) => ({
+        ...f,
+        plate: data.plate || f.plate,
+        vin: data.chassisNumber || f.vin,
+        make: data.make || f.make,
+        model: data.model || f.model,
+        year: data.year || f.year,
+        colour: data.colour || f.colour,
+      }));
+      setMulkiyaMsg({ ok: true, text: 'Extracted from your Mulkiya — check the fields below and edit anything that looks wrong before saving.' });
+    } catch (err) {
+      setMulkiyaMsg({ ok: false, text: `${err.message} — enter vehicle details manually below.` });
+    } finally {
+      setMulkiyaBusy(false);
+      e.target.value = '';
+    }
+  }
+
+  // Settlement letter upload (LoanClear only) → Claude Vision extraction → the
+  // exact bank payoff figure and reference become the authoritative loan
+  // amount, superseding the estimate entered at quote time. Only saved once
+  // the seller reviews/edits and hits "Save & Continue".
+  async function handleSettlementFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setSettlementBusy(true);
+    onError('');
+    setSettlementMsg(null);
+    try {
+      const { base64, mediaType } = await fileToBase64(file);
+      const { data } = await api.post(`/api/deals/${deal.id}/extract-settlement`, { imageBase64: base64, mediaType });
+      setForm((f) => ({
+        ...f,
+        loan_amount: data.settlementAmount ?? f.loan_amount,
+        loan_account: data.loanReferenceNumber || f.loan_account,
+        loan_bank: data.bankName || f.loan_bank,
+      }));
+      setSettlementMsg({ ok: true, text: 'Extracted from your bank settlement letter — this is the authoritative payoff figure. Review and edit if needed, then save.' });
+    } catch (err) {
+      setSettlementMsg({ ok: false, text: `${err.message} — enter the settlement amount manually below.` });
+    } finally {
+      setSettlementBusy(false);
+      e.target.value = '';
+    }
   }
 
   async function handleSubmit(e) {
@@ -269,10 +435,22 @@ function DetailsCard({ deal, accent, onUpdate, onError }) {
   return (
     <DarkCard>
       <h4 className="font-display text-lg font-semibold text-white mb-4">Vehicle & financial details</h4>
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+
+      <UploadDropzone label="Upload Mulkiya (vehicle registration card) to autofill vehicle details" busy={mulkiyaBusy} onFile={handleMulkiyaFile} />
+      {mulkiyaMsg && (mulkiyaMsg.ok ? <p className="mt-2 text-xs text-green">{mulkiyaMsg.text}</p> : <ErrorBanner message={mulkiyaMsg.text} />)}
+
+      {deal.product === 'loanclear' && (
+        <div className="mt-4">
+          <UploadDropzone label="Upload bank settlement letter to autofill the loan payoff amount" busy={settlementBusy} onFile={handleSettlementFile} />
+          {settlementMsg && (settlementMsg.ok ? <p className="mt-2 text-xs text-green">{settlementMsg.text}</p> : <ErrorBanner message={settlementMsg.text} />)}
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="flex flex-col gap-4 mt-5">
         {!deal.buyer_id && (
           <Input label="Buyer's phone (must already have an account)" type="tel" value={buyerPhone} onChange={(e) => setBuyerPhone(e.target.value)} required />
         )}
+        <Input label="Plate number" value={form.plate} onChange={set('plate')} required />
         <Input label="VIN (from Mulkiya)" value={form.vin} onChange={set('vin')} required />
         <div className="grid grid-cols-2 gap-3">
           <Input label="Make" value={form.make} onChange={set('make')} required />
@@ -299,7 +477,16 @@ function DetailsCard({ deal, accent, onUpdate, onError }) {
             </select>
           </label>
         </div>
-        {deal.product === 'loanclear' && <Input label="Loan account number" value={form.loan_account} onChange={set('loan_account')} required />}
+        {deal.product === 'loanclear' && (
+          <>
+            <p className="text-xs uppercase tracking-wide text-white/40 font-sans font-bold mt-2">Loan settlement (from bank letter)</p>
+            <Input label="Settlement amount (AED)" type="number" min="0" value={form.loan_amount} onChange={set('loan_amount')} required />
+            <div className="grid grid-cols-2 gap-3">
+              <Input label="Loan reference number" value={form.loan_account} onChange={set('loan_account')} required />
+              <Input label="Bank" value={form.loan_bank} onChange={set('loan_bank')} required />
+            </div>
+          </>
+        )}
         <p className="text-xs uppercase tracking-wide text-white/40 font-sans font-bold mt-2">Your proceeds account</p>
         <Input label="IBAN" value={form.seller_iban} onChange={set('seller_iban')} required />
         <Input label="Account holder name" value={form.seller_acc_name} onChange={set('seller_acc_name')} required />

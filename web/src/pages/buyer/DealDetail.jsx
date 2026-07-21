@@ -1,18 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { DarkCard, GoldCard } from '../../components/Card';
+import { Button } from '../../components/Button';
+import { Input } from '../../components/Input';
 import { Badge, ProductBadge } from '../../components/Badge';
 import { ErrorBanner } from '../../components/Alert';
 import { ProgressSteps } from '../../components/ProgressSteps';
 import { SkeletonCard } from '../../components/Skeleton';
 import { STAGES, STAGE_ORDER, STAGE_LABELS, stageIndex } from '../../lib/dealStages';
 import { formatAed } from '../../lib/feeCalculator';
+import { fileToBase64 } from '../../lib/files';
 import { api } from '../../lib/api';
 
-// Buyer view is read-only for every stage — all deal actions (fines upload,
-// vehicle/financial details, transfer certificate) are the seller's job.
-// The buyer just tracks progress and completes identity/signing steps that
-// arrive via external WhatsApp/SignNow links, so we poll continuously.
+// Buyer view is read-only for most stages — all deal actions (fines upload,
+// vehicle/financial details, transfer certificate) are the seller's job. The
+// one exception is identity verification: the buyer uploads their own
+// Emirates ID (Claude Vision autofill) directly on the KYC stage below. Other
+// steps (signing) arrive via external WhatsApp/SignNow links, so we poll
+// continuously to reflect their progress.
 const POLL_STAGES = new Set([
   STAGES.QUOTE,
   STAGES.FINES_VERIFY,
@@ -73,7 +78,7 @@ export default function BuyerDealDetail() {
 
       <div className="mt-6">
         <ErrorBanner message={error} />
-        <StageCard deal={deal} />
+        <StageCard deal={deal} onUpdate={setDeal} onError={setError} />
       </div>
 
       <div className="mt-8">
@@ -83,14 +88,14 @@ export default function BuyerDealDetail() {
   );
 }
 
-function StageCard({ deal }) {
+function StageCard({ deal, onUpdate, onError }) {
   switch (deal.status) {
     case STAGES.QUOTE:
       return <WaitingCard title="Quote created" body="The seller is preparing this deal — check back soon." />;
     case STAGES.FINES_VERIFY:
       return <WaitingCard title="Verifying traffic fines" body="The seller is verifying the car's traffic fines." />;
     case STAGES.KYC:
-      return <KycCard deal={deal} />;
+      return <KycCard deal={deal} onUpdate={onUpdate} onError={onError} />;
     case STAGES.DETAILS:
       return <WaitingCard title="Vehicle & financial details" body="The seller is entering the vehicle and payment details." />;
     case STAGES.SIGNING:
@@ -115,7 +120,7 @@ function WaitingCard({ title, body }) {
   );
 }
 
-function KycCard({ deal }) {
+function KycCard({ deal, onUpdate, onError }) {
   return (
     <DarkCard>
       <h4 className="font-display text-lg font-semibold text-white mb-4">Identity verification</h4>
@@ -123,13 +128,87 @@ function KycCard({ deal }) {
         <PartyKycStatus label="Seller" complete={deal.seller_kyc_complete} />
         <PartyKycStatus label="You" complete={deal.buyer_kyc_complete} />
       </div>
-      {!deal.buyer_kyc_complete && (
-        <p className="mt-4 text-sm text-white/50">Check WhatsApp for a link to complete your identity verification.</p>
-      )}
+
+      {!deal.buyer_kyc_complete && <EidVerifyForm deal={deal} onUpdate={onUpdate} onError={onError} />}
+
       {deal.buyer_kyc_complete && !deal.seller_kyc_complete && (
         <p className="mt-4 text-sm text-white/50">You're verified — waiting on the seller.</p>
       )}
     </DarkCard>
+  );
+}
+
+// Emirates ID upload → Claude Vision extraction → editable review → explicit
+// confirm-and-lock via PATCH /:id/kyc. Mirrors the seller-side flow — never
+// auto-saves; the buyer reviews/edits the extracted fields before confirming.
+function EidVerifyForm({ deal, onUpdate, onError }) {
+  const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({ fullName: '', eidNumber: '', nationality: '' });
+  const [extractMsg, setExtractMsg] = useState(null);
+
+  function set(field) {
+    return (e) => setForm((f) => ({ ...f, [field]: e.target.value }));
+  }
+
+  async function handleFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setBusy(true);
+    onError('');
+    setExtractMsg(null);
+    try {
+      const { base64, mediaType } = await fileToBase64(file);
+      const { data } = await api.post(`/api/deals/${deal.id}/extract-eid`, { imageBase64: base64, mediaType });
+      setForm({ fullName: data.fullName || '', eidNumber: data.eidNumber || '', nationality: data.nationality || '' });
+      setExtractMsg({ ok: true, text: 'Extracted from your Emirates ID — check the fields below and edit anything that looks wrong, then confirm.' });
+    } catch (err) {
+      setExtractMsg({ ok: false, text: `${err.message} — enter your details manually below.` });
+    } finally {
+      setBusy(false);
+      e.target.value = '';
+    }
+  }
+
+  async function handleConfirm(e) {
+    e.preventDefault();
+    if (!form.fullName.trim() || !form.eidNumber.trim()) return onError('Full name and Emirates ID number are required');
+    setSaving(true);
+    onError('');
+    try {
+      const { deal: updated } = await api.patch(`/api/deals/${deal.id}/kyc`, form);
+      onUpdate(updated);
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="mt-4 rounded-lg border border-white/8 bg-white/4 p-4">
+      <p className="text-sm text-white/70 mb-3">Your identity verification (Emirates ID)</p>
+      <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-gold/40 py-6 text-center hover:border-gold transition-colors">
+        {busy ? (
+          <span className="h-5 w-5 animate-spin rounded-full border-2 border-gold border-t-transparent" />
+        ) : (
+          <>
+            <span className="text-xl">📤</span>
+            <span className="text-xs text-white/60">Tap to upload your Emirates ID photo</span>
+          </>
+        )}
+        <input type="file" accept="image/*" className="hidden" onChange={handleFile} disabled={busy} />
+      </label>
+      {extractMsg && (extractMsg.ok ? <p className="mt-2 text-xs text-green">{extractMsg.text}</p> : <ErrorBanner message={extractMsg.text} />)}
+
+      <form onSubmit={handleConfirm} className="flex flex-col gap-3 mt-3">
+        <Input label="Full name" value={form.fullName} onChange={set('fullName')} />
+        <Input label="Emirates ID number" value={form.eidNumber} onChange={set('eidNumber')} />
+        <Button type="submit" variant="secondary" loading={saving} className="w-full">
+          Confirm & verify identity
+        </Button>
+      </form>
+    </div>
   );
 }
 

@@ -6,6 +6,7 @@ const { supabaseAdmin } = require('../config/supabase');
 const feeCalculator = require('../services/feeCalculator');
 const dealFlowEngine = require('../services/dealFlowEngine');
 const finesVerification = require('../services/finesVerificationService');
+const documentVision = require('../services/documentVisionService');
 const docGen = require('../services/documentGenerator');
 const { STAGES } = require('../utils/dealStages');
 const logger = require('../utils/logger');
@@ -232,6 +233,97 @@ async function verifyFines(req, res) {
 }
 
 /**
+ * POST /api/deals/:id/extract-mulkiya — accepts a base64 Mulkiya (vehicle
+ * registration card) photo, runs Claude Vision extraction, and returns the
+ * extracted vehicle fields for the seller to confirm/edit before saving via
+ * PATCH /:id/details. Never writes to the DB directly.
+ */
+async function extractMulkiya(req, res) {
+  const { imageBase64, mediaType } = req.body;
+  if (!imageBase64) return res.status(400).json({ error: 'imageBase64 is required' });
+
+  const { data: deal, error } = await supabaseAdmin.from('deals').select('id').eq('id', req.params.id).single();
+  if (error || !deal) return res.status(404).json({ error: 'Deal not found' });
+
+  const result = await documentVision.extractMulkiya({ imageBase64, mediaType });
+  if (!result.success) return res.status(422).json({ extracted: false, error: result.reason, reason: result.reason });
+
+  return res.json({ extracted: true, data: result.data });
+}
+
+/**
+ * POST /api/deals/:id/extract-settlement — LoanClear only. Accepts a base64
+ * bank settlement letter photo, runs Claude Vision extraction, and returns the
+ * authoritative settlement amount + loan reference for the seller to
+ * confirm/edit before saving via PATCH /:id/details (as loan_amount/loan_account/
+ * loan_bank). This figure supersedes the approximate loan estimate entered at
+ * quote time. Never writes to the DB directly.
+ */
+async function extractSettlement(req, res) {
+  const { imageBase64, mediaType } = req.body;
+  if (!imageBase64) return res.status(400).json({ error: 'imageBase64 is required' });
+
+  const { data: deal, error } = await supabaseAdmin.from('deals').select('id, product').eq('id', req.params.id).single();
+  if (error || !deal) return res.status(404).json({ error: 'Deal not found' });
+  if (deal.product !== 'loanclear') return res.status(400).json({ error: 'Settlement letter extraction only applies to LoanClear deals' });
+
+  const result = await documentVision.extractSettlementLetter({ imageBase64, mediaType });
+  if (!result.success) return res.status(422).json({ extracted: false, error: result.reason, reason: result.reason });
+
+  return res.json({ extracted: true, data: result.data });
+}
+
+/**
+ * POST /api/deals/:id/extract-eid — accepts a base64 Emirates ID photo, runs
+ * Claude Vision extraction, and returns the extracted identity fields for the
+ * uploading party (seller or buyer) to confirm/edit before saving via
+ * PATCH /:id/kyc. Never writes to the DB directly.
+ */
+async function extractEid(req, res) {
+  const { imageBase64, mediaType } = req.body;
+  if (!imageBase64) return res.status(400).json({ error: 'imageBase64 is required' });
+
+  const { data: deal, error } = await supabaseAdmin.from('deals').select('id').eq('id', req.params.id).single();
+  if (error || !deal) return res.status(404).json({ error: 'Deal not found' });
+
+  const result = await documentVision.extractEmiratesId({ imageBase64, mediaType });
+  if (!result.success) return res.status(422).json({ extracted: false, error: result.reason, reason: result.reason });
+
+  return res.json({ extracted: true, data: result.data });
+}
+
+/**
+ * PATCH /api/deals/:id/kyc — saves the confirmed (Claude Vision-extracted, or
+ * manually entered) identity fields for whichever party is calling — seller or
+ * buyer on this deal — to their `users` row, and flips the corresponding
+ * deals.seller_kyc_complete / buyer_kyc_complete flag. Scoped so a user can only
+ * confirm their own KYC, and only if they're actually a party to this deal.
+ */
+async function confirmKyc(req, res) {
+  const { fullName, eidNumber, nationality } = req.body;
+  if (!fullName || !eidNumber) return res.status(400).json({ error: 'fullName and eidNumber are required' });
+
+  const { data: deal, error } = await supabaseAdmin.from('deals').select('*').eq('id', req.params.id).single();
+  if (error || !deal) return res.status(404).json({ error: 'Deal not found' });
+
+  const isSeller = deal.seller_id === req.appUser.id;
+  const isBuyer = deal.buyer_id === req.appUser.id;
+  if (!isSeller && !isBuyer) return res.status(403).json({ error: 'You are not a party to this deal' });
+
+  const userUpdates = { full_name: fullName, emirates_id: eidNumber };
+  if (nationality) userUpdates.nationality = nationality;
+
+  const { error: userErr } = await supabaseAdmin.from('users').update(userUpdates).eq('id', req.appUser.id);
+  if (userErr) return res.status(500).json({ error: 'Could not save identity details — please try again' });
+
+  const dealUpdates = isSeller ? { seller_kyc_complete: true } : { buyer_kyc_complete: true };
+  const { data: updated, error: dealErr } = await supabaseAdmin.from('deals').update(dealUpdates).eq('id', deal.id).select().single();
+  if (dealErr) return res.status(500).json({ error: 'Could not update KYC status — please try again' });
+
+  return res.json({ deal: updated });
+}
+
+/**
  * POST /api/deals/:id/generate-docs — manually (re)triggers document
  * generation for a deal. Normally this fires automatically on entering the
  * SIGNING stage (see dealFlowEngine), but this endpoint allows admin/manual re-generation.
@@ -292,7 +384,10 @@ async function completeDeal(req, res) {
 
 const DETAILS_ALLOWED_FIELDS = [
   'vin',
+  'plate',
+  'loan_amount',
   'loan_account',
+  'loan_bank',
   'seller_iban',
   'seller_acc_name',
   'seller_proc_bank',
@@ -324,7 +419,9 @@ async function updateDetails(req, res) {
   }
 
   const salePrice = updates.sale_price ?? deal.sale_price;
-  const loanAmount = deal.loan_amount || 0;
+  // Prefer a newly-submitted loan_amount (e.g. the authoritative figure just
+  // confirmed from a bank settlement letter extraction) over the stored estimate.
+  const loanAmount = updates.loan_amount !== undefined ? Number(updates.loan_amount) : deal.loan_amount || 0;
   const finesAmount = deal.fines_amount || 0;
   const cdFee = deal.product === 'loanclear' ? feeCalculator.calculateLoanClearFee(loanAmount) : feeCalculator.calculateSafePayFee(salePrice);
   updates.cd_fee = cdFee;
@@ -336,4 +433,19 @@ async function updateDetails(req, res) {
   return res.json({ deal: updated });
 }
 
-module.exports = { createDeal, attachBuyer, getDeal, listMine, advanceStage, verifyFines, generateDocs, getDocs, completeDeal, updateDetails };
+module.exports = {
+  createDeal,
+  attachBuyer,
+  getDeal,
+  listMine,
+  advanceStage,
+  verifyFines,
+  extractMulkiya,
+  extractSettlement,
+  extractEid,
+  confirmKyc,
+  generateDocs,
+  getDocs,
+  completeDeal,
+  updateDetails,
+};
