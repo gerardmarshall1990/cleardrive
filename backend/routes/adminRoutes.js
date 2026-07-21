@@ -7,6 +7,7 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 
 router.get('/deals', requireAuth, requireRole('admin'), asyncHandler(adminController.getAllDeals));
 router.get('/stats', requireAuth, requireRole('admin'), asyncHandler(adminController.getStats));
+router.get('/deals/:id', requireAuth, requireRole('admin'), asyncHandler(adminController.getDealDetail));
 router.put('/deals/:id/override', requireAuth, requireRole('admin'), asyncHandler(adminController.manualOverride));
 
 module.exports = router;

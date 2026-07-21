@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { DarkCard } from '../../components/Card';
 import { Button } from '../../components/Button';
+import { Input } from '../../components/Input';
 import { Badge, ProductBadge } from '../../components/Badge';
 import { ErrorBanner, SuccessBanner } from '../../components/Alert';
 import { ProgressSteps } from '../../components/ProgressSteps';
@@ -12,14 +13,17 @@ import { api } from '../../lib/api';
 
 // Manual-override toggles — mirror backend/controllers/adminController.js's
 // OVERRIDABLE_FIELDS. Used to unblock deals while TrustIn KYC / SignNow
-// signing aren't yet live integrations, or when a signature was collected
-// outside the platform.
+// signing / Claude Vision fines extraction aren't yet live integrations (or
+// are currently failing), or when a verification/signature/payment was
+// collected outside the platform.
 const OVERRIDE_FIELDS = [
+  { key: 'fines_verified', label: 'Traffic fines verified' },
   { key: 'seller_kyc_complete', label: 'Seller KYC complete' },
   { key: 'buyer_kyc_complete', label: 'Buyer KYC complete' },
   { key: 'doc001_signed', label: 'DOC-001 signed (Transaction & Escrow Agreement)' },
   { key: 'doc002_signed', label: 'DOC-002 signed (Limited Power of Attorney)' },
   { key: 'doc003_signed', label: 'DOC-003 signed (Referral Agreement)', requiresPartner: true },
+  { key: 'funds_confirmed', label: 'Escrow funds confirmed received' },
 ];
 
 export default function AdminDealDetail() {
@@ -28,10 +32,12 @@ export default function AdminDealDetail() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [saving, setSaving] = useState(false);
+  const [finesAmount, setFinesAmount] = useState('');
+  const [transferCertUrl, setTransferCertUrl] = useState('');
 
   const load = useCallback(async () => {
     try {
-      const { deal } = await api.get(`/api/deals/${id}`);
+      const { deal } = await api.get(`/api/admin/deals/${id}`);
       setDeal(deal);
     } catch (err) {
       setError(err.message);
@@ -47,9 +53,33 @@ export default function AdminDealDetail() {
     setError('');
     setSuccess('');
     try {
-      const { deal: updated } = await api.put(`/api/admin/deals/${id}/override`, { [field]: !deal[field] });
+      const body = { [field]: !deal[field] };
+      // If admin is marking fines as verified and has entered a figure, include it
+      // so cd_fee/net_proceeds get recalculated the same way the automated path does.
+      if (field === 'fines_verified' && !deal.fines_verified && finesAmount !== '') {
+        body.finesAmount = Number(finesAmount);
+      }
+      const { deal: updated } = await api.put(`/api/admin/deals/${id}/override`, body);
       setDeal(updated);
       setSuccess('Updated');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function submitTransferCert(e) {
+    e.preventDefault();
+    if (!transferCertUrl.trim()) return;
+    setSaving(true);
+    setError('');
+    setSuccess('');
+    try {
+      const { deal: updated } = await api.put(`/api/admin/deals/${id}/override`, { transferCertUrl: transferCertUrl.trim() });
+      setDeal(updated);
+      setSuccess('Transfer certificate saved');
+      setTransferCertUrl('');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -79,6 +109,22 @@ export default function AdminDealDetail() {
 
       <ProgressSteps currentStage={deal.status} accent={accent} />
 
+      {deal.blockedOn?.length > 0 && (
+        <DarkCard className="mt-6 !border-error/30 !bg-error/6">
+          <h4 className="font-display text-base font-semibold text-white mb-2">
+            Why this deal is stuck at "{STAGE_LABELS[deal.status] || deal.status}"
+          </h4>
+          <ul className="flex flex-col gap-1.5">
+            {deal.blockedOn.map((b) => (
+              <li key={b.field} className="text-sm text-white/70 flex items-start gap-2">
+                <span className="text-error mt-0.5">●</span>
+                <span>{b.label}</span>
+              </li>
+            ))}
+          </ul>
+        </DarkCard>
+      )}
+
       <div className="mt-6 grid gap-4 sm:grid-cols-2">
         <DarkCard>
           <h4 className="font-display text-base font-semibold text-white mb-3">Deal summary</h4>
@@ -104,14 +150,41 @@ export default function AdminDealDetail() {
         <SuccessBanner message={success} />
         <div className="flex flex-col gap-3 mt-2">
           {OVERRIDE_FIELDS.filter((f) => !f.requiresPartner || deal.referral_partner_id).map((f) => (
-            <div key={f.key} className="flex items-center justify-between rounded-lg border border-white/8 bg-white/4 p-3">
-              <span className="text-sm text-white/70">{f.label}</span>
-              <Button variant={deal[f.key] ? 'secondary' : accent} loading={saving} onClick={() => toggleField(f.key)} className="!px-4 !py-2 !text-sm">
-                {deal[f.key] ? 'Undo' : 'Mark complete'}
-              </Button>
+            <div key={f.key} className="rounded-lg border border-white/8 bg-white/4 p-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-white/70">{f.label}</span>
+                <Button variant={deal[f.key] ? 'secondary' : accent} loading={saving} onClick={() => toggleField(f.key)} className="!px-4 !py-2 !text-sm">
+                  {deal[f.key] ? 'Undo' : 'Mark complete'}
+                </Button>
+              </div>
+              {f.key === 'fines_verified' && !deal.fines_verified && (
+                <Input
+                  label="Fines amount (AED) — optional, e.g. read off the RTA screenshot yourself"
+                  type="number"
+                  min="0"
+                  value={finesAmount}
+                  onChange={(e) => setFinesAmount(e.target.value)}
+                  className="mt-3"
+                />
+              )}
             </div>
           ))}
         </div>
+
+        {deal.status === 'tasjeel' && !deal.transfer_cert_url && (
+          <form onSubmit={submitTransferCert} className="mt-4 rounded-lg border border-white/8 bg-white/4 p-3">
+            <p className="text-sm text-white/70 mb-2">Tasjeel transfer certificate URL/reference</p>
+            <div className="flex gap-2">
+              <Input value={transferCertUrl} onChange={(e) => setTransferCertUrl(e.target.value)} placeholder="https://... or manual reference" className="flex-1" />
+              <Button type="submit" variant={accent} loading={saving} className="!px-4 !py-2 !text-sm">
+                Save
+              </Button>
+            </div>
+          </form>
+        )}
+        {deal.transfer_cert_url && (
+          <p className="mt-3 text-xs text-white/40">Transfer certificate on file: <span className="font-mono text-white/60">{deal.transfer_cert_url}</span></p>
+        )}
       </DarkCard>
 
       <div className="mt-8">
