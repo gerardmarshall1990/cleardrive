@@ -1,23 +1,34 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, Linking, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { DarkCard, GoldCard } from '../../components/Card';
-import { Button } from '../../components/Button';
-import { Input, Select } from '../../components/Input';
-import { Badge, ProductBadge } from '../../components/Badge';
-import { ErrorBanner } from '../../components/Alert';
-import { ProgressSteps } from '../../components/ProgressSteps';
-import { SkeletonCard } from '../../components/Skeleton';
-import { STAGES, STAGE_ORDER, STAGE_LABELS, stageIndex } from '../../lib/dealStages';
-import { formatAed } from '../../lib/feeCalculator';
-import { assetToBase64 } from '../../lib/files';
-import { api } from '../../lib/api';
-import { colors, fonts } from '../../theme/theme';
+import { DarkCard, GoldCard } from '../components/Card';
+import { Button } from '../components/Button';
+import { Input, Select } from '../components/Input';
+import { Badge, ProductBadge } from '../components/Badge';
+import { ErrorBanner } from '../components/Alert';
+import { ProgressSteps } from '../components/ProgressSteps';
+import { SkeletonCard } from '../components/Skeleton';
+import { STAGES, STAGE_ORDER, STAGE_LABELS, stageIndex } from '../lib/dealStages';
+import { formatAed } from '../lib/feeCalculator';
+import { assetToBase64 } from '../lib/files';
+import { useAuth } from '../lib/AuthContext';
+import { api } from '../lib/api';
+import { colors, fonts } from '../theme/theme';
 
-const POLL_STAGES = new Set([STAGES.KYC, STAGES.SIGNING, STAGES.ESCROW, STAGES.TASJEEL]);
+// Buyer's superset of poll stages, used for everyone — mirrors web DealDetail.
+const POLL_STAGES = new Set([
+  STAGES.QUOTE,
+  STAGES.FINES_VERIFY,
+  STAGES.KYC,
+  STAGES.DETAILS,
+  STAGES.SIGNING,
+  STAGES.ESCROW,
+  STAGES.TASJEEL,
+]);
 
-export default function SellerDealDetail({ route }) {
+export default function DealDetail({ route }) {
   const { id } = route.params;
+  const { user } = useAuth();
   const [deal, setDeal] = useState(null);
   const [error, setError] = useState('');
   const pollRef = useRef(null);
@@ -53,6 +64,7 @@ export default function SellerDealDetail({ route }) {
   }
 
   const accent = deal.product === 'safepay' ? 'green' : 'gold';
+  const myRole = deal.seller_id === user?.id ? 'seller' : 'buyer';
 
   return (
     <ScrollView style={{ backgroundColor: colors.navy }} contentContainerStyle={styles.wrap}>
@@ -65,7 +77,12 @@ export default function SellerDealDetail({ route }) {
       <ProgressSteps currentStage={deal.status} accent={accent} />
 
       <ErrorBanner message={error} />
-      <StageCard deal={deal} accent={accent} onUpdate={setDeal} onError={setError} reload={load} />
+
+      {myRole === 'seller' ? (
+        <SellerStageCard deal={deal} accent={accent} onUpdate={setDeal} onError={setError} />
+      ) : (
+        <BuyerStageCard deal={deal} />
+      )}
 
       <View style={{ marginTop: 24 }}>
         <Timeline currentStage={deal.status} />
@@ -74,27 +91,59 @@ export default function SellerDealDetail({ route }) {
   );
 }
 
-function StageCard({ deal, accent, onUpdate, onError }) {
+function SellerStageCard({ deal, accent, onUpdate, onError }) {
   switch (deal.status) {
     case STAGES.QUOTE:
       return <ContinueCard deal={deal} accent={accent} target={STAGES.FINES_VERIFY} onUpdate={onUpdate} onError={onError} title="Quote created" body="Ready to verify traffic fines." />;
     case STAGES.FINES_VERIFY:
       return <FinesVerifyCard deal={deal} onUpdate={onUpdate} onError={onError} />;
     case STAGES.KYC:
-      return <KycCard deal={deal} accent={accent} onUpdate={onUpdate} onError={onError} />;
+      return <KycCard deal={deal} myRole="seller" accent={accent} onUpdate={onUpdate} onError={onError} />;
     case STAGES.DETAILS:
       return <DetailsCard deal={deal} accent={accent} onUpdate={onUpdate} onError={onError} />;
     case STAGES.SIGNING:
-      return <SigningCard deal={deal} />;
+      return <SigningCard deal={deal} isBuyer={false} />;
     case STAGES.ESCROW:
-      return <EscrowCard deal={deal} />;
+      return <EscrowCard deal={deal} isBuyer={false} />;
     case STAGES.TASJEEL:
       return <TasjeelCard deal={deal} accent={accent} onUpdate={onUpdate} onError={onError} />;
     case STAGES.COMPLETE:
-      return <CompleteCard deal={deal} />;
+      return <CompleteCard deal={deal} isBuyer={false} />;
     default:
       return null;
   }
+}
+
+function BuyerStageCard({ deal }) {
+  switch (deal.status) {
+    case STAGES.QUOTE:
+      return <WaitingCard title="Quote created" body="The seller is preparing this deal — check back soon." />;
+    case STAGES.FINES_VERIFY:
+      return <WaitingCard title="Verifying traffic fines" body="The seller is verifying the car's traffic fines." />;
+    case STAGES.KYC:
+      return <KycCard deal={deal} myRole="buyer" />;
+    case STAGES.DETAILS:
+      return <WaitingCard title="Vehicle & financial details" body="The seller is entering the vehicle and payment details." />;
+    case STAGES.SIGNING:
+      return <SigningCard deal={deal} isBuyer />;
+    case STAGES.ESCROW:
+      return <EscrowCard deal={deal} isBuyer />;
+    case STAGES.TASJEEL:
+      return <WaitingCard title="Tasjeel transfer" body="Once ownership is transferred at the RTA, the seller will submit the transfer certificate to finish the deal." />;
+    case STAGES.COMPLETE:
+      return <CompleteCard deal={deal} isBuyer />;
+    default:
+      return null;
+  }
+}
+
+function WaitingCard({ title, body }) {
+  return (
+    <DarkCard style={{ marginTop: 24 }}>
+      <Text style={styles.cardTitle}>{title}</Text>
+      <Text style={styles.cardBody}>{body}</Text>
+    </DarkCard>
+  );
 }
 
 function ContinueCard({ deal, accent, target, onUpdate, onError, title, body }) {
@@ -186,7 +235,7 @@ function FinesVerifyCard({ deal, onUpdate, onError }) {
   );
 }
 
-function KycCard({ deal, accent, onUpdate, onError }) {
+function KycCard({ deal, myRole, accent, onUpdate, onError }) {
   const [loading, setLoading] = useState(false);
   const bothComplete = deal.seller_kyc_complete && deal.buyer_kyc_complete;
 
@@ -207,13 +256,27 @@ function KycCard({ deal, accent, onUpdate, onError }) {
     <DarkCard style={{ marginTop: 24 }}>
       <Text style={[styles.cardTitle, { marginBottom: 12 }]}>Identity verification</Text>
       <View style={styles.kycGrid}>
-        <PartyKycStatus label="Seller" complete={deal.seller_kyc_complete} />
-        <PartyKycStatus label="Buyer" complete={deal.buyer_kyc_complete} note={!deal.buyer_id ? 'No buyer attached yet' : undefined} />
+        <PartyKycStatus label={myRole === 'seller' ? 'You (seller)' : 'Seller'} complete={deal.seller_kyc_complete} />
+        <PartyKycStatus
+          label={myRole === 'buyer' ? 'You (buyer)' : 'Buyer'}
+          complete={deal.buyer_kyc_complete}
+          note={myRole === 'seller' && !deal.buyer_id ? 'No buyer attached yet' : undefined}
+        />
       </View>
-      <Text style={[styles.cardBody, { marginTop: 12 }]}>Both parties must complete identity verification before proceeding.</Text>
-      <Button variant={accent} loading={loading} disabled={!bothComplete} onPress={handleContinue} style={{ marginTop: 16 }}>
-        {bothComplete ? 'Continue →' : 'Waiting for verification…'}
-      </Button>
+      {myRole === 'seller' && (
+        <>
+          <Text style={[styles.cardBody, { marginTop: 12 }]}>Both parties must complete identity verification before proceeding.</Text>
+          <Button variant={accent} loading={loading} disabled={!bothComplete} onPress={handleContinue} style={{ marginTop: 16 }}>
+            {bothComplete ? 'Continue →' : 'Waiting for verification…'}
+          </Button>
+        </>
+      )}
+      {myRole === 'buyer' && !deal.buyer_kyc_complete && (
+        <Text style={[styles.cardBody, { marginTop: 12 }]}>Check WhatsApp for a link to complete your identity verification.</Text>
+      )}
+      {myRole === 'buyer' && deal.buyer_kyc_complete && !deal.seller_kyc_complete && (
+        <Text style={[styles.cardBody, { marginTop: 12 }]}>You're verified — waiting on the seller.</Text>
+      )}
     </DarkCard>
   );
 }
@@ -301,7 +364,7 @@ function DetailsCard({ deal, accent, onUpdate, onError }) {
   );
 }
 
-function SigningCard({ deal }) {
+function SigningCard({ deal, isBuyer }) {
   const docs = [
     { label: 'DOC-001 — Transaction & Escrow Agreement', signed: deal.doc001_signed },
     { label: 'DOC-002 — Limited Power of Attorney', signed: deal.doc002_signed },
@@ -311,7 +374,11 @@ function SigningCard({ deal }) {
   return (
     <DarkCard style={{ marginTop: 24 }}>
       <Text style={styles.cardTitle}>Documents & signing</Text>
-      <Text style={[styles.cardBody, { marginBottom: 12 }]}>Review and sign each document. We'll notify you when everyone has signed.</Text>
+      <Text style={[styles.cardBody, { marginBottom: 12 }]}>
+        {isBuyer
+          ? "Check your email for signing links. We'll notify you once everyone has signed."
+          : "Review and sign each document. We'll notify you when everyone has signed."}
+      </Text>
       <View style={{ gap: 10 }}>
         {docs.map((doc) => (
           <View key={doc.label} style={styles.docRow}>
@@ -324,15 +391,23 @@ function SigningCard({ deal }) {
   );
 }
 
-function EscrowCard({ deal }) {
+function EscrowCard({ deal, isBuyer }) {
   return (
     <DarkCard style={{ marginTop: 24 }}>
       <Text style={styles.cardTitle}>Escrow</Text>
-      <Text style={[styles.cardBody, { marginBottom: 12 }]}>Waiting for the buyer's funds to reach the secure escrow account.</Text>
+      <Text style={[styles.cardBody, { marginBottom: 12 }]}>
+        {isBuyer ? 'Transfer the agreed sale price to the secure escrow account below.' : "Waiting for the buyer's funds to reach the secure escrow account."}
+      </Text>
       {deal.trustin_escrow_iban && (
         <View style={styles.escrowBox}>
           <Text style={styles.rowLabel}>Escrow IBAN</Text>
           <Text style={styles.escrowIban}>{deal.trustin_escrow_iban}</Text>
+          {isBuyer && (
+            <>
+              <Text style={[styles.rowLabel, { marginTop: 10 }]}>Amount</Text>
+              <Text style={styles.escrowIban}>{formatAed(deal.sale_price)}</Text>
+            </>
+          )}
         </View>
       )}
       <View style={[styles.row, { marginTop: 12 }]}>
@@ -381,15 +456,28 @@ function TasjeelCard({ deal, accent, onUpdate, onError }) {
   );
 }
 
-function CompleteCard({ deal }) {
+function CompleteCard({ deal, isBuyer }) {
   return (
     <GoldCard style={{ marginTop: 24 }}>
       <Text style={styles.cardTitle}>🎉 Deal complete</Text>
-      <Text style={[styles.cardBody, { marginBottom: 12 }]}>Your proceeds have been released to your account.</Text>
-      <View style={styles.row}>
-        <Text style={styles.rowLabel}>Net proceeds released</Text>
-        <Text style={styles.completeAmount}>{formatAed(deal.net_proceeds)}</Text>
-      </View>
+      {isBuyer ? (
+        <>
+          <Text style={styles.cardBody}>The vehicle transfer is complete and funds have been released to the seller.</Text>
+          {deal.transfer_cert_url && (
+            <Pressable onPress={() => Linking.openURL(deal.transfer_cert_url)}>
+              <Text style={styles.link}>View transfer certificate →</Text>
+            </Pressable>
+          )}
+        </>
+      ) : (
+        <>
+          <Text style={[styles.cardBody, { marginBottom: 12 }]}>Your proceeds have been released to your account.</Text>
+          <View style={styles.row}>
+            <Text style={styles.rowLabel}>Net proceeds released</Text>
+            <Text style={styles.completeAmount}>{formatAed(deal.net_proceeds)}</Text>
+          </View>
+        </>
+      )}
     </GoldCard>
   );
 }
@@ -445,5 +533,6 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   rowLabel: { fontFamily: fonts.sans, fontSize: 13, color: colors.white50 },
   completeAmount: { fontFamily: fonts.display, fontSize: 20, fontWeight: 'bold', color: colors.gold },
+  link: { color: colors.gold, fontFamily: fonts.sans, fontSize: 13, marginTop: 12 },
   timelineHeading: { fontFamily: fonts.sansBold, fontSize: 11, color: colors.white40, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 },
 });

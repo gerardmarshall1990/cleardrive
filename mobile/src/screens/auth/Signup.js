@@ -7,11 +7,11 @@ import { ErrorBanner } from '../../components/Alert';
 import { useAuth } from '../../lib/AuthContext';
 import { colors, fonts } from '../../theme/theme';
 
-const ROLE_LABELS = { seller: 'Seller', buyer: 'Buyer', dealer: 'Dealer', broker: 'Broker' };
+const ROLE_LABELS = { dealer: 'Dealer', broker: 'Broker' };
 
 export default function Signup({ navigation, route }) {
   const { signup } = useAuth();
-  const [role, setRole] = useState(route.params?.role || 'seller');
+  const [role, setRole] = useState(route.params?.role || 'individual');
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
@@ -39,11 +39,13 @@ export default function Signup({ navigation, route }) {
         <Text style={styles.heading}>Create your account</Text>
         <ErrorBanner message={error} />
 
-        <Select label="I am a..." selectedValue={role} onValueChange={setRole}>
-          {Object.entries(ROLE_LABELS).map(([value, label]) => (
-            <Select.Item key={value} label={label} value={value} />
-          ))}
-        </Select>
+        {role !== 'individual' && (
+          <Select label="I am a..." selectedValue={role} onValueChange={setRole}>
+            {Object.entries(ROLE_LABELS).map(([value, label]) => (
+              <Select.Item key={value} label={label} value={value} />
+            ))}
+          </Select>
+        )}
 
         <Input label="Full name" value={fullName} onChangeText={setFullName} />
         <Input label="Phone" keyboardType="phone-pad" placeholder="+9715XXXXXXXX" value={phone} onChangeText={setPhone} />

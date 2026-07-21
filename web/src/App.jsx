@@ -6,11 +6,9 @@ import Welcome from './pages/Welcome';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
 import JoinDeal from './pages/JoinDeal';
-import MyDeals from './pages/seller/MyDeals';
-import NewDeal from './pages/seller/NewDeal';
-import DealDetail from './pages/seller/DealDetail';
-import BuyerMyDeals from './pages/buyer/MyDeals';
-import BuyerDealDetail from './pages/buyer/DealDetail';
+import MyDeals from './pages/MyDeals';
+import NewDeal from './pages/NewDeal';
+import DealDetail from './pages/DealDetail';
 import AdminDashboard from './pages/admin/Dashboard';
 import AdminDealDetail from './pages/admin/DealDetail';
 import MyReferrals from './pages/partner/MyReferrals';
@@ -28,9 +26,9 @@ function App() {
           <Route path="/join/:dealId/:role" element={<JoinDeal />} />
 
           <Route
-            path="/seller"
+            path="/deals"
             element={
-              <ProtectedRoute roles={['seller']}>
+              <ProtectedRoute roles={['individual']}>
                 <AppShell>
                   <MyDeals />
                 </AppShell>
@@ -38,9 +36,9 @@ function App() {
             }
           />
           <Route
-            path="/seller/new"
+            path="/deals/new"
             element={
-              <ProtectedRoute roles={['seller']}>
+              <ProtectedRoute roles={['individual']}>
                 <AppShell>
                   <NewDeal />
                 </AppShell>
@@ -48,42 +46,11 @@ function App() {
             }
           />
           <Route
-            path="/seller/deals/:id"
+            path="/deals/:id"
             element={
-              <ProtectedRoute roles={['seller']}>
+              <ProtectedRoute roles={['individual']}>
                 <AppShell>
                   <DealDetail />
-                </AppShell>
-              </ProtectedRoute>
-            }
-          />
-
-          <Route
-            path="/buyer"
-            element={
-              <ProtectedRoute roles={['buyer']}>
-                <AppShell>
-                  <BuyerMyDeals />
-                </AppShell>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/buyer/new"
-            element={
-              <ProtectedRoute roles={['buyer']}>
-                <AppShell>
-                  <NewDeal />
-                </AppShell>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/buyer/deals/:id"
-            element={
-              <ProtectedRoute roles={['buyer']}>
-                <AppShell>
-                  <BuyerDealDetail />
                 </AppShell>
               </ProtectedRoute>
             }

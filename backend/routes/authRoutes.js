@@ -19,7 +19,7 @@ router.post(
     body('password').isString().isLength({ min: 8 }),
     body('fullName').isString().notEmpty(),
     body('phone').isString().notEmpty(),
-    body('role').isIn(['seller', 'buyer', 'dealer', 'broker']),
+    body('role').isIn(['individual', 'dealer', 'broker']),
   ],
   validate,
   asyncHandler(authController.signup)

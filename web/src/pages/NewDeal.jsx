@@ -1,29 +1,28 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Input, Select } from '../../components/Input';
-import { Button } from '../../components/Button';
-import { DarkCard, GoldCard } from '../../components/Card';
-import { ErrorBanner } from '../../components/Alert';
-import { ProgressSteps } from '../../components/ProgressSteps';
-import { UAE_BANKS } from '../../lib/banks';
-import { calculateLoanClearFee, calculateSafePayFee, calculateNetProceeds, formatAed } from '../../lib/feeCalculator';
-import { STAGES } from '../../lib/dealStages';
-import { api } from '../../lib/api';
-import { useAuth } from '../../lib/AuthContext';
+import { Input, Select } from '../components/Input';
+import { Button } from '../components/Button';
+import { DarkCard, GoldCard } from '../components/Card';
+import { ErrorBanner } from '../components/Alert';
+import { ProgressSteps } from '../components/ProgressSteps';
+import { UAE_BANKS } from '../lib/banks';
+import { calculateLoanClearFee, calculateSafePayFee, calculateNetProceeds, formatAed } from '../lib/feeCalculator';
+import { STAGES } from '../lib/dealStages';
+import { api } from '../lib/api';
 
 const SAFEPAY_MIN = 100000;
 
 // Single "Create Deal" form for both sides of the trade — no separate
-// seller-only vs buyer-only creation code paths. The account's own role
-// (fixed at signup) decides which fields matter and who the join link goes
-// to; everything else is shared. The moment the deal is created, an invite
-// link is auto-sent (WhatsApp + email) to the other party so they can join
-// with zero extra steps on either side.
+// seller-only vs buyer-only creation code paths. Which side you're playing on
+// THIS deal is picked here, per-deal, rather than being fixed on your
+// account — the same account can create one deal as the seller and another
+// as the buyer. Everything else is shared. The moment the deal is created, an
+// invite link is auto-sent (WhatsApp + email) to the other party so they can
+// join with zero extra steps on either side.
 export default function NewDeal() {
   const navigate = useNavigate();
-  const { user } = useAuth();
   const [params] = useSearchParams();
-  const role = user?.role === 'buyer' ? 'buyer' : 'seller';
+  const [role, setRole] = useState(params.get('role') === 'buyer' ? 'buyer' : 'seller');
   const isBuyer = role === 'buyer';
 
   const [product, setProduct] = useState(params.get('product') === 'safepay' ? 'safepay' : 'loanclear');
@@ -62,6 +61,7 @@ export default function NewDeal() {
     setLoading(true);
     try {
       const { deal } = await api.post('/api/deals', {
+        role,
         product,
         plate: plate.trim().toUpperCase(),
         salePrice: salePriceNum,
@@ -76,7 +76,7 @@ export default function NewDeal() {
       if (!isBuyer) {
         await api.put(`/api/deals/${deal.id}/stage`, { targetStage: STAGES.FINES_VERIFY });
       }
-      navigate(isBuyer ? `/buyer/deals/${deal.id}` : `/seller/deals/${deal.id}`);
+      navigate(`/deals/${deal.id}`);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -99,10 +99,10 @@ export default function NewDeal() {
       <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-5">
         <ErrorBanner message={error} />
 
-        <DarkCard className="!p-3 !bg-white/[0.03]">
-          <p className="text-xs uppercase tracking-wide text-white/40 font-sans font-bold">You are the</p>
-          <p className="mt-1 text-sm font-semibold text-white capitalize">{role}</p>
-        </DarkCard>
+        <Select label="On this deal, you are the..." value={role} onChange={(e) => setRole(e.target.value)}>
+          <option value="seller" className="bg-navy">Seller</option>
+          <option value="buyer" className="bg-navy">Buyer</option>
+        </Select>
 
         <Select label="Product" value={product} onChange={(e) => setProduct(e.target.value)}>
           <option value="loanclear" className="bg-navy">LoanClear — car has a bank loan</option>

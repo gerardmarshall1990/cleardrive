@@ -7,7 +7,7 @@ import { ErrorBanner } from '../components/Alert';
 import { useAuth } from '../lib/AuthContext';
 import { api } from '../lib/api';
 
-const ROLE_LABELS = { seller: 'Seller', buyer: 'Buyer', dealer: 'Dealer', broker: 'Broker' };
+const ROLE_LABELS = { dealer: 'Dealer', broker: 'Broker' };
 
 export default function Signup() {
   const { signup } = useAuth();
@@ -15,8 +15,11 @@ export default function Signup() {
   const [params] = useSearchParams();
   const product = params.get('product');
   const joinDeal = params.get('joinDeal');
+  // joinRole is the seller/buyer side embedded in a join link, distinct from
+  // the account-type `role` param used for dealer/broker Welcome links.
+  const joinRole = params.get('joinRole');
 
-  const [role, setRole] = useState(params.get('role') || 'seller');
+  const [role, setRole] = useState(params.get('role') || 'individual');
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
@@ -34,14 +37,13 @@ export default function Signup() {
 
       // Arrived via a join link — attach to the deal immediately on signup
       // completion and land directly inside it. No separate attach step.
-      if (joinDeal) {
-        const { deal } = await api.post(`/api/deals/${joinDeal}/join`, { role });
-        navigate(role === 'seller' ? `/seller/deals/${deal.id}` : `/buyer/deals/${deal.id}`);
+      if (joinDeal && joinRole) {
+        const { deal } = await api.post(`/api/deals/${joinDeal}/join`, { role: joinRole });
+        navigate(`/deals/${deal.id}`);
         return;
       }
 
-      if (user.role === 'seller') navigate(product ? `/seller/new?product=${product}` : '/seller/new');
-      else if (user.role === 'buyer') navigate('/buyer/new');
+      if (user.role === 'individual') navigate(product ? `/deals/new?product=${product}` : '/deals/new');
       else navigate('/partner');
     } catch (err) {
       setError(err.message);
@@ -59,13 +61,15 @@ export default function Signup() {
         </h2>
         <ErrorBanner message={error} />
 
-        <Select label="I am a..." value={role} onChange={(e) => setRole(e.target.value)} disabled={!!joinDeal}>
-          {Object.entries(ROLE_LABELS).map(([value, label]) => (
-            <option key={value} value={value} className="bg-navy">
-              {label}
-            </option>
-          ))}
-        </Select>
+        {role !== 'individual' && (
+          <Select label="I am a..." value={role} onChange={(e) => setRole(e.target.value)}>
+            {Object.entries(ROLE_LABELS).map(([value, label]) => (
+              <option key={value} value={value} className="bg-navy">
+                {label}
+              </option>
+            ))}
+          </Select>
+        )}
 
         <Input label="Full name" value={fullName} onChange={(e) => setFullName(e.target.value)} required autoFocus />
         <Input label="Phone" type="tel" placeholder="+9715XXXXXXXX" value={phone} onChange={(e) => setPhone(e.target.value)} required />
@@ -90,7 +94,7 @@ export default function Signup() {
         </Button>
         <p className="text-center text-sm text-white/50">
           Already have an account?{' '}
-          <Link to={joinDeal ? `/login?role=${role}&joinDeal=${joinDeal}` : '/login'} className="text-gold hover:underline">
+          <Link to={joinDeal ? `/login?joinRole=${joinRole}&joinDeal=${joinDeal}` : '/login'} className="text-gold hover:underline">
             Log in
           </Link>
         </p>

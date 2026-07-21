@@ -8,16 +8,14 @@ import { stackScreenOptions } from './navConfig';
 import Welcome from '../screens/auth/Welcome';
 import Login from '../screens/auth/Login';
 import Signup from '../screens/auth/Signup';
-import { SellerTabs } from './SellerTabs';
-import { BuyerTabs } from './BuyerTabs';
+import { IndividualTabs } from './IndividualTabs';
 import { AdminTabs } from './AdminTabs';
 import { PartnerTabs } from './PartnerTabs';
 
 const Stack = createNativeStackNavigator();
 
 const TABS_BY_ROLE = {
-  seller: SellerTabs,
-  buyer: BuyerTabs,
+  individual: IndividualTabs,
   admin: AdminTabs,
   dealer: PartnerTabs,
   broker: PartnerTabs,
@@ -46,7 +44,7 @@ export function RootNavigator() {
     );
   }
 
-  const Tabs = TABS_BY_ROLE[user.role] || SellerTabs;
+  const Tabs = TABS_BY_ROLE[user.role] || IndividualTabs;
   return (
     <NavigationContainer>
       <Tabs />

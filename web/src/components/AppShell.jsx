@@ -3,11 +3,10 @@ import { Logo } from './Logo';
 import { useAuth } from '../lib/AuthContext';
 
 const TABS_BY_ROLE = {
-  seller: [
-    { to: '/seller', label: 'My Deals', icon: '🚗' },
-    { to: '/seller/new', label: 'New Deal', icon: '➕' },
+  individual: [
+    { to: '/deals', label: 'My Deals', icon: '🚗' },
+    { to: '/deals/new', label: 'New Deal', icon: '➕' },
   ],
-  buyer: [{ to: '/buyer', label: 'My Deals', icon: '🚗' }],
   dealer: [
     { to: '/partner', label: 'My Referrals', icon: '📋' },
     { to: '/partner/new', label: 'New Referral', icon: '➕' },

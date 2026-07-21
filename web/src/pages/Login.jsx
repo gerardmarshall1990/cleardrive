@@ -12,7 +12,7 @@ export default function Login() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const joinDeal = params.get('joinDeal');
-  const joinRole = params.get('role');
+  const joinRole = params.get('joinRole');
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -29,16 +29,16 @@ export default function Login() {
       // Arrived via a join link — attach to the deal immediately and land
       // directly inside it, instead of the generic role-based landing page.
       if (joinDeal && joinRole) {
-        if (user.role !== joinRole) {
-          setError(`This invite is for a ${joinRole} account — you're logged in as a ${user.role}`);
+        if (user.role !== 'individual') {
+          setError(`This invite requires an individual account — you're logged in as a ${user.role} account`);
           return;
         }
         const { deal } = await api.post(`/api/deals/${joinDeal}/join`, { role: joinRole });
-        navigate(joinRole === 'seller' ? `/seller/deals/${deal.id}` : `/buyer/deals/${deal.id}`);
+        navigate(`/deals/${deal.id}`);
         return;
       }
 
-      const dest = { seller: '/seller', buyer: '/buyer', dealer: '/partner', broker: '/partner', admin: '/admin' }[user.role] || '/';
+      const dest = { individual: '/deals', dealer: '/partner', broker: '/partner', admin: '/admin' }[user.role] || '/';
       navigate(dest);
     } catch (err) {
       setError(err.message);
@@ -60,7 +60,7 @@ export default function Login() {
         </Button>
         <p className="text-center text-sm text-white/50">
           No account?{' '}
-          <Link to={joinDeal ? `/signup?role=${joinRole}&joinDeal=${joinDeal}` : '/signup'} className="text-gold hover:underline">
+          <Link to={joinDeal ? `/signup?joinRole=${joinRole}&joinDeal=${joinDeal}` : '/signup'} className="text-gold hover:underline">
             Sign up
           </Link>
         </p>

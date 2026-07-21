@@ -24,14 +24,14 @@ export default function JoinDeal() {
 
   useEffect(() => {
     if (loading || !user) return;
-    if (user.role !== role) {
-      setError(`This invite is for a ${role} account — you're currently logged in as a ${user.role}.`);
+    if (user.role !== 'individual') {
+      setError(`This invite requires an individual account — you're currently logged in as a ${user.role} account.`);
       return;
     }
     setJoining(true);
     api
       .post(`/api/deals/${dealId}/join`, { role })
-      .then(({ deal }) => navigate(role === 'seller' ? `/seller/deals/${deal.id}` : `/buyer/deals/${deal.id}`, { replace: true }))
+      .then(({ deal }) => navigate(`/deals/${deal.id}`, { replace: true }))
       .catch((err) => {
         setError(err.message);
         setJoining(false);
@@ -53,10 +53,10 @@ export default function JoinDeal() {
 
       {!user && (
         <div className="mt-6 flex w-full max-w-xs flex-col gap-3">
-          <Button onClick={() => navigate(`/signup?role=${role}&joinDeal=${dealId}`)} className="w-full">
+          <Button onClick={() => navigate(`/signup?joinRole=${role}&joinDeal=${dealId}`)} className="w-full">
             Create account & join
           </Button>
-          <Button variant="secondary" onClick={() => navigate(`/login?role=${role}&joinDeal=${dealId}`)} className="w-full">
+          <Button variant="secondary" onClick={() => navigate(`/login?joinRole=${role}&joinDeal=${dealId}`)} className="w-full">
             I already have an account — log in
           </Button>
         </div>
@@ -68,7 +68,7 @@ export default function JoinDeal() {
           className="mt-6 w-full max-w-xs"
           onClick={async () => {
             await logout();
-            navigate(`/login?role=${role}&joinDeal=${dealId}`);
+            navigate(`/login?joinRole=${role}&joinDeal=${dealId}`);
           }}
         >
           Log out and use a different account

@@ -1,5 +1,6 @@
-// Auth controller — self-serve signup/login for sellers, buyers, dealers, and
-// brokers. Admins are created manually in Supabase (not self-serve, per spec).
+// Auth controller — self-serve signup/login for individuals (who act as
+// seller or buyer on a per-deal basis), dealers, and brokers. Admins are
+// created manually in Supabase (not self-serve, per spec).
 //
 // Signup creates a Supabase Auth user (email/password) AND the matching row in
 // our `users` table (role, name, phone, etc.) that requireAuth looks up on
@@ -9,7 +10,7 @@
 const { supabaseAdmin, supabaseAuth } = require('../config/supabase');
 const logger = require('../utils/logger');
 
-const SELF_SERVE_ROLES = ['seller', 'buyer', 'dealer', 'broker'];
+const SELF_SERVE_ROLES = ['individual', 'dealer', 'broker'];
 
 /** POST /api/auth/signup */
 async function signup(req, res) {

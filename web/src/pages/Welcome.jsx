@@ -8,8 +8,8 @@ export default function Welcome() {
   const navigate = useNavigate();
 
   function handleProductClick(product) {
-    if (!user) return navigate(`/signup?role=seller&product=${product}`);
-    if (user.role === 'seller') return navigate(`/seller/new?product=${product}`);
+    if (!user) return navigate(`/signup?product=${product}`);
+    if (user.role === 'individual') return navigate(`/deals/new?product=${product}`);
     navigate('/');
   }
 
@@ -51,17 +51,14 @@ export default function Welcome() {
             <Link to="/login" className="text-sm text-white/60 hover:text-gold font-sans">
               Already have an account? Log in →
             </Link>
-            <Link to="/signup?role=buyer" className="text-sm text-white/40 hover:text-gold font-sans">
-              I'm a buyer — track a deal →
-            </Link>
             <Link to="/signup?role=dealer" className="text-sm text-white/40 hover:text-gold font-sans">
               I'm a dealer or broker →
             </Link>
           </>
         )}
-        {user && user.role === 'buyer' && (
-          <Button variant="secondary" onClick={() => navigate('/buyer')}>
-            Track your deal →
+        {user && user.role === 'individual' && (
+          <Button variant="secondary" onClick={() => navigate('/deals')}>
+            My deals →
           </Button>
         )}
         {user && (user.role === 'dealer' || user.role === 'broker') && (

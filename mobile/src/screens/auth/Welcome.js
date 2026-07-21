@@ -8,7 +8,7 @@ export default function Welcome({ navigation }) {
       <Logo size="lg" />
 
       <View style={styles.cards}>
-        <Pressable onPress={() => navigation.navigate('Signup', { role: 'seller', product: 'loanclear' })}>
+        <Pressable onPress={() => navigation.navigate('Signup', { product: 'loanclear' })}>
           <View style={[styles.card, { borderTopColor: colors.gold }]}>
             <Text style={[styles.cardTitle, { color: colors.gold }]}>LoanClear</Text>
             <Text style={styles.cardSubtitle}>Sell your financed car</Text>
@@ -19,7 +19,7 @@ export default function Welcome({ navigation }) {
           </View>
         </Pressable>
 
-        <Pressable onPress={() => navigation.navigate('Signup', { role: 'seller', product: 'safepay' })}>
+        <Pressable onPress={() => navigation.navigate('Signup', { product: 'safepay' })}>
           <View style={[styles.card, { borderTopColor: colors.green }]}>
             <Text style={[styles.cardTitle, { color: colors.green }]}>SafePay</Text>
             <Text style={styles.cardSubtitle}>Any private car sale</Text>
@@ -34,9 +34,6 @@ export default function Welcome({ navigation }) {
       <View style={styles.links}>
         <Pressable onPress={() => navigation.navigate('Login')}>
           <Text style={styles.link}>Already have an account? Log in →</Text>
-        </Pressable>
-        <Pressable onPress={() => navigation.navigate('Signup', { role: 'buyer' })}>
-          <Text style={styles.linkDim}>I'm a buyer — track a deal →</Text>
         </Pressable>
         <Pressable onPress={() => navigation.navigate('Signup', { role: 'dealer' })}>
           <Text style={styles.linkDim}>I'm a dealer or broker →</Text>
