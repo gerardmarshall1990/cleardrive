@@ -42,20 +42,16 @@ export function AppShell({ children }) {
             <Logo size="sm" showTagline={false} />
           </Link>
 
-          {user && tabs.length > 0 && (
+          {user && tabs[0] && (
             <nav className="hidden md:flex items-center gap-6">
-              {tabs.map((tab) => {
-                const active = location.pathname === tab.to;
-                return (
-                  <Link
-                    key={tab.to}
-                    to={tab.to}
-                    className={`text-sm font-sans font-semibold ${active ? 'text-gold' : 'text-white/60 hover:text-gold'}`}
-                  >
-                    {tab.label}
-                  </Link>
-                );
-              })}
+              <Link
+                to={tabs[0].to}
+                className={`text-sm font-sans font-semibold ${
+                  location.pathname === tabs[0].to ? 'text-gold' : 'text-white/60 hover:text-gold'
+                }`}
+              >
+                {tabs[0].label}
+              </Link>
             </nav>
           )}
 

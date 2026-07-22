@@ -30,9 +30,14 @@ export default function MyDeals() {
     <div>
       <div className="mb-6 flex items-center justify-between">
         <h2 className="font-display text-2xl font-bold text-white">My Deals</h2>
-        <Link to="/deals/new" className="text-sm font-semibold text-gold hover:underline">
-          + New Deal
-        </Link>
+        <div className="flex items-center gap-4">
+          <Link to="/deals/join" className="text-sm font-semibold text-gold hover:underline">
+            + Join Deal
+          </Link>
+          <Link to="/deals/new" className="text-sm font-semibold text-gold hover:underline">
+            + New Deal
+          </Link>
+        </div>
       </div>
 
       <ErrorBanner message={error} />
