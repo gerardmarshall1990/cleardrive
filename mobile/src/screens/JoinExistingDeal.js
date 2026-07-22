@@ -10,6 +10,11 @@ import { formatAed } from '../lib/feeCalculator';
 import { api } from '../lib/api';
 import { colors, fonts } from '../theme/theme';
 
+function vehicleTitle(deal) {
+  const parts = [deal.year, deal.make, deal.model].filter(Boolean);
+  return parts.length ? parts.join(' ') : null;
+}
+
 // "Join Deal" by reference number — mirrors the web version. An alternative
 // to the emailed/WhatsApp'd join link, for when that link hasn't arrived
 // (or won't, e.g. mock mode) or the other party would rather just type in
@@ -71,6 +76,7 @@ export default function JoinExistingDeal({ navigation }) {
             <Text style={styles.ref}>{preview.deal.ref}</Text>
             <ProductBadge product={preview.deal.product} />
           </View>
+          {vehicleTitle(preview.deal) && <Text style={styles.vehicle}>{vehicleTitle(preview.deal)}</Text>}
           <Row label="Plate" value={preview.deal.plate} />
           <Row label="Sale price" value={formatAed(preview.deal.sale_price)} />
           <Row label="Stage" value={STAGE_LABELS[preview.deal.status] || preview.deal.status} />
@@ -105,8 +111,9 @@ const styles = StyleSheet.create({
   wrap: { padding: 16, paddingBottom: 40, gap: 16 },
   heading: { fontFamily: fonts.display, fontSize: 22, color: colors.white, marginTop: 8 },
   subheading: { fontFamily: fonts.sans, fontSize: 13, color: colors.white50 },
-  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 },
   ref: { fontFamily: fonts.display, fontSize: 17, fontWeight: 'bold', color: colors.white },
+  vehicle: { fontFamily: fonts.sans, fontSize: 13, color: colors.white70, marginBottom: 10 },
   row: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
   rowLabel: { fontFamily: fonts.sans, fontSize: 13, color: colors.white50 },
   rowValue: { fontFamily: fonts.sansSemiBold, fontSize: 13, color: colors.white },

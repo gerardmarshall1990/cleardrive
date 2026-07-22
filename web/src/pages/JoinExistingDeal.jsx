@@ -9,6 +9,11 @@ import { STAGE_LABELS } from '../lib/dealStages';
 import { formatAed } from '../lib/feeCalculator';
 import { api } from '../lib/api';
 
+function vehicleTitle(deal) {
+  const parts = [deal.year, deal.make, deal.model].filter(Boolean);
+  return parts.length ? parts.join(' ') : null;
+}
+
 // "Join Deal" by reference number — an alternative to the emailed/WhatsApp'd
 // join link, for when that link hasn't arrived (or won't, e.g. mock mode) or
 // the other party would rather just type in the deal ref themselves.
@@ -73,10 +78,13 @@ export default function JoinExistingDeal() {
 
       {preview && (
         <DarkCard className="mt-6">
-          <div className="flex items-center gap-3 mb-3">
+          <div className="flex items-center gap-3 mb-1">
             <h4 className="font-display text-lg font-semibold text-white">{preview.deal.ref}</h4>
             <ProductBadge product={preview.deal.product} />
           </div>
+          {vehicleTitle(preview.deal) && (
+            <p className="mb-3 text-sm text-white/70">{vehicleTitle(preview.deal)}</p>
+          )}
           <Row label="Plate" value={preview.deal.plate} />
           <Row label="Sale price" value={formatAed(preview.deal.sale_price)} />
           <Row label="Stage" value={STAGE_LABELS[preview.deal.status] || preview.deal.status} />
