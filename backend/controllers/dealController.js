@@ -69,6 +69,9 @@ async function createDeal(req, res) {
   const {
     product, // 'loanclear' | 'safepay'
     plate,
+    make,
+    model,
+    year,
     salePrice,
     loanAmount,
     loanBank,
@@ -167,6 +170,9 @@ async function createDeal(req, res) {
       seller_id: sellerId,
       buyer_id: buyerId,
       plate,
+      make: make || null,
+      model: model || null,
+      year: year || null,
       sale_price: salePrice,
       loan_amount: product === 'loanclear' ? effectiveLoanAmount : null,
       loan_bank: product === 'loanclear' ? loanBank || null : null,

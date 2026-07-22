@@ -22,6 +22,9 @@ export default function NewDeal({ navigation, route }) {
 
   const [product, setProduct] = useState(route.params?.product === 'safepay' ? 'safepay' : 'loanclear');
   const [plate, setPlate] = useState('');
+  const [make, setMake] = useState('');
+  const [model, setModel] = useState('');
+  const [year, setYear] = useState('');
   const [salePrice, setSalePrice] = useState('');
   const [loanAmount, setLoanAmount] = useState('');
   const [loanBank, setLoanBank] = useState(UAE_BANKS[0]);
@@ -57,6 +60,9 @@ export default function NewDeal({ navigation, route }) {
         role,
         product,
         plate: plate.trim().toUpperCase(),
+        make: make.trim() || undefined,
+        model: model.trim() || undefined,
+        year: year ? parseInt(year, 10) : undefined,
         salePrice: salePriceNum,
         loanAmount: product === 'loanclear' && loanAmountNum ? loanAmountNum : undefined,
         loanBank: product === 'loanclear' ? loanBank : undefined,
@@ -67,6 +73,9 @@ export default function NewDeal({ navigation, route }) {
         await api.put(`/api/deals/${deal.id}/stage`, { targetStage: STAGES.FINES_VERIFY });
       }
       setPlate('');
+      setMake('');
+      setModel('');
+      setYear('');
       setSalePrice('');
       setLoanAmount('');
       setOtherPartyPhone('');
@@ -102,6 +111,17 @@ export default function NewDeal({ navigation, route }) {
       </Select>
 
       <Input label="Plate number" placeholder="e.g. A 12345" value={plate} onChangeText={setPlate} />
+      <View style={styles.makeModelRow}>
+        <View style={{ flex: 1 }}>
+          <Input label="Make" placeholder="e.g. Ferrari" value={make} onChangeText={setMake} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Input label="Model" placeholder="e.g. 812" value={model} onChangeText={setModel} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Input label="Year" keyboardType="numeric" placeholder="e.g. 2023" value={year} onChangeText={setYear} />
+        </View>
+      </View>
       <Input
         label={isBuyer ? 'Proposed sale price (AED)' : 'Agreed sale price (AED)'}
         keyboardType="numeric"
@@ -174,6 +194,7 @@ function Row({ label, value, muted }) {
 
 const styles = StyleSheet.create({
   wrap: { padding: 16, paddingBottom: 40, gap: 16 },
+  makeModelRow: { flexDirection: 'row', gap: 8 },
   heading: { fontFamily: fonts.display, fontSize: 22, color: colors.white, marginTop: 8 },
   subheading: { fontFamily: fonts.sans, fontSize: 13, color: colors.white50 },
   contactBox: { borderRadius: 10, borderWidth: 1, borderColor: colors.white8, backgroundColor: colors.white4, padding: 14, gap: 12 },

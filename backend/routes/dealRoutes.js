@@ -21,6 +21,9 @@ router.post(
     body('sellerPhone').optional().isString(),
     body('plate').isString().notEmpty(),
     body('salePrice').isFloat({ gt: 0 }),
+    body('make').optional().isString(),
+    body('model').optional().isString(),
+    body('year').optional().isInt({ min: 1900, max: 2100 }),
   ],
   validate,
   asyncHandler(dealController.createDeal)

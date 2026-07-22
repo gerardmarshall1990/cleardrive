@@ -27,6 +27,9 @@ export default function NewDeal() {
 
   const [product, setProduct] = useState(params.get('product') === 'safepay' ? 'safepay' : 'loanclear');
   const [plate, setPlate] = useState('');
+  const [make, setMake] = useState('');
+  const [model, setModel] = useState('');
+  const [year, setYear] = useState('');
   const [salePrice, setSalePrice] = useState('');
   const [loanAmount, setLoanAmount] = useState('');
   const [loanBank, setLoanBank] = useState(UAE_BANKS[0]);
@@ -64,6 +67,9 @@ export default function NewDeal() {
         role,
         product,
         plate: plate.trim().toUpperCase(),
+        make: make.trim() || undefined,
+        model: model.trim() || undefined,
+        year: year ? parseInt(year, 10) : undefined,
         salePrice: salePriceNum,
         loanAmount: product === 'loanclear' && loanAmountNum ? loanAmountNum : undefined,
         loanBank: product === 'loanclear' ? loanBank : undefined,
@@ -110,6 +116,12 @@ export default function NewDeal() {
         </Select>
 
         <Input label="Plate number" placeholder="e.g. A 12345" value={plate} onChange={(e) => setPlate(e.target.value)} required />
+
+        <div className="grid grid-cols-3 gap-3">
+          <Input label="Make" placeholder="e.g. Ferrari" value={make} onChange={(e) => setMake(e.target.value)} />
+          <Input label="Model" placeholder="e.g. 812" value={model} onChange={(e) => setModel(e.target.value)} />
+          <Input label="Year" type="number" placeholder="e.g. 2023" value={year} onChange={(e) => setYear(e.target.value)} />
+        </div>
 
         <Input
           label={isBuyer ? 'Proposed sale price (AED)' : 'Agreed sale price (AED)'}
