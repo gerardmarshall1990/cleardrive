@@ -13,6 +13,11 @@ import { useAuth } from '../lib/AuthContext';
 import { api } from '../lib/api';
 import { colors, fonts } from '../theme/theme';
 
+function vehicleTitle(deal) {
+  const parts = [deal.year, deal.make, deal.model].filter(Boolean);
+  return parts.length ? parts.join(' ') : null;
+}
+
 // One list for every deal the account is part of, whichever side they're
 // playing on each one — mirrors the web MyDeals page.
 export default function MyDeals({ navigation }) {
@@ -66,7 +71,13 @@ export default function MyDeals({ navigation }) {
                       <ProductBadge product={deal.product} />
                       <Badge variant="pending">{myRole === 'seller' ? "You're selling" : "You're buying"}</Badge>
                     </View>
-                    <Text style={styles.plate}>{deal.plate}</Text>
+                    {vehicleTitle(deal) ? (
+                      <Text style={styles.plate}>
+                        {vehicleTitle(deal)} <Text style={styles.plateMuted}>· {deal.plate}</Text>
+                      </Text>
+                    ) : (
+                      <Text style={styles.plate}>{deal.plate}</Text>
+                    )}
                   </View>
                   <Badge variant="pending">{STAGE_LABELS[deal.status] || deal.status}</Badge>
                 </View>
@@ -89,7 +100,8 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
   rowTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   ref: { fontFamily: fonts.display, fontSize: 17, fontWeight: 'bold', color: colors.white },
-  plate: { fontFamily: fonts.sans, fontSize: 13, color: colors.white50, marginTop: 4 },
+  plate: { fontFamily: fonts.sans, fontSize: 13, color: colors.white70, marginTop: 4 },
+  plateMuted: { color: colors.white40 },
   muted: { fontFamily: fonts.sans, fontSize: 13, color: colors.white40 },
   value: { fontFamily: fonts.sansSemiBold, fontSize: 13, color: colors.white },
 });

@@ -10,6 +10,11 @@ import { formatAed } from '../lib/feeCalculator';
 import { useAuth } from '../lib/AuthContext';
 import { api } from '../lib/api';
 
+function vehicleTitle(deal) {
+  const parts = [deal.year, deal.make, deal.model].filter(Boolean);
+  return parts.length ? parts.join(' ') : null;
+}
+
 // One list for every deal the account is part of, whichever side they're
 // playing on each one — an individual account can be selling one car and
 // buying another at the same time, so each card is tagged with the role for
@@ -70,7 +75,13 @@ export default function MyDeals() {
                       <ProductBadge product={deal.product} />
                       <Badge variant="pending">{myRole === 'seller' ? "You're selling" : "You're buying"}</Badge>
                     </div>
-                    <p className="mt-1 text-sm text-white/50">{deal.plate}</p>
+                    {vehicleTitle(deal) ? (
+                      <p className="mt-1 text-sm text-white/70">
+                        {vehicleTitle(deal)} <span className="text-white/40">· {deal.plate}</span>
+                      </p>
+                    ) : (
+                      <p className="mt-1 text-sm text-white/50">{deal.plate}</p>
+                    )}
                   </div>
                   <Badge variant="pending">{STAGE_LABELS[deal.status] || deal.status}</Badge>
                 </div>
