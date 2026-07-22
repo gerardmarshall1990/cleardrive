@@ -52,6 +52,8 @@ services:
         sync: false
       - key: EMAIL_MOCK_MODE
         value: "true"
+      - key: SENTRY_DSN
+        sync: false # optional - set once you sign up at sentry.io and create a Node project
       - key: JWT_SECRET
         generateValue: true
       - key: COMPANY_NAME

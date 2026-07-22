@@ -4,9 +4,12 @@
   "description": "ClearDrive vehicle escrow platform - backend API",
   "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "jest",
     "start": "node server.js",
     "dev": "node --watch server.js"
+  },
+  "jest": {
+    "testEnvironment": "node"
   },
   "keywords": [],
   "author": "",
@@ -14,6 +17,7 @@
   "type": "commonjs",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.112.3",
+    "@sentry/node": "^10.67.0",
     "@supabase/supabase-js": "^2.110.7",
     "axios": "^1.18.1",
     "cors": "^2.8.6",
@@ -28,5 +32,9 @@
     "node-cron": "^4.6.0",
     "pdfkit": "^0.19.1",
     "uuid": "^14.0.1"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^7.2.2"
   }
 }

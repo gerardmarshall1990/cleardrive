@@ -3,6 +3,13 @@
 // that may already exist in the parent shell environment.
 require('dotenv').config({ override: true });
 
+const Sentry = require('@sentry/node');
+// No-op until SENTRY_DSN is set (sign up free at sentry.io, paste the DSN into
+// .env / Render env vars) — until then this call does nothing and costs nothing.
+if (process.env.SENTRY_DSN) {
+  Sentry.init({ dsn: process.env.SENTRY_DSN, environment: process.env.NODE_ENV || 'development' });
+}
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');

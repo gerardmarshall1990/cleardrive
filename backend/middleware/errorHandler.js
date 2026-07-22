@@ -2,6 +2,7 @@
 // returns only a friendly message to the client, per design spec
 // ("never show raw error messages ... always give the user a next action").
 
+const Sentry = require('@sentry/node');
 const { supabaseAdmin } = require('../config/supabase');
 const logger = require('../utils/logger');
 
@@ -14,6 +15,12 @@ function asyncHandler(fn) {
 // eslint-disable-next-line no-unused-vars
 async function globalErrorHandler(err, req, res, next) {
   logger.error(`Unhandled error on ${req.method} ${req.originalUrl}`, { error: err.message, stack: err.stack });
+
+  // No-op if SENTRY_DSN isn't set — real-time alerting is additive to the
+  // existing error_log table below, not a replacement for it.
+  if (process.env.SENTRY_DSN) {
+    Sentry.captureException(err, { extra: { route: `${req.method} ${req.originalUrl}` } });
+  }
 
   try {
     await supabaseAdmin.from('error_log').insert({
