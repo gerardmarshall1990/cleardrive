@@ -691,6 +691,10 @@ function EidVerifyForm({ deal, onUpdate, onError }) {
       </label>
       {extractMsg && (extractMsg.ok ? <p className="mt-2 text-xs text-green">{extractMsg.text}</p> : <ErrorBanner message={extractMsg.text} />)}
 
+      <p className="mt-3 text-xs font-semibold text-gold">
+        Double-check this matches your Emirates ID exactly, letter for letter — this name is used on legally binding deal documents.
+      </p>
+
       <form onSubmit={handleConfirm} className="flex flex-col gap-3 mt-3">
         <Input label="Full name" value={form.fullName} onChange={set('fullName')} />
         <Input label="Emirates ID number" value={form.eidNumber} onChange={set('eidNumber')} />

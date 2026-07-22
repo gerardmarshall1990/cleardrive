@@ -119,10 +119,17 @@ async function extractSettlementLetter({ imageBase64, mediaType }) {
 }
 
 const EMIRATES_ID_PROMPT =
-  'This is a UAE Emirates ID card (front side). Extract the full name and the Emirates ID number exactly as printed. ' +
+  'This is the FRONT side of a UAE Emirates ID card. Top to bottom it contains a photo, "ID Number" ' +
+  '(format 784-YYYY-XXXXXXX-X), "Name" (printed in English/Latin script only), "Nationality", "Date of Birth", ' +
+  '"Sex", and "Card Number". ' +
+  'Extract ONLY the value printed next to the "Name" field, in Latin characters exactly as spelled on the card — ' +
+  'do not reorder the words, do not abbreviate or expand any part of it, do not transliterate or translate from ' +
+  'the Arabic name shown elsewhere on the card, and do not substitute the nationality or any other field for the name. ' +
+  'This name will be used on legally binding documents, so accuracy matters more than completeness: if this is the ' +
+  'BACK of the card instead (occupation, employer, issuing/expiry dates, signature) or if you are not fully confident ' +
+  'in the exact spelling of every letter of the name or the full ID number, set legible to false rather than guessing. ' +
   'Return JSON only, no other text, in exactly this shape: ' +
-  '{"full_name": string, "eid_number": string, "nationality": string (or null if not visible), "legible": boolean}. ' +
-  'The eid_number should be in the format 784-YYYY-XXXXXXX-X. Set legible to true only if both full name and EID number are clearly legible.';
+  '{"full_name": string, "eid_number": string, "nationality": string (or null if not visible), "legible": boolean}.';
 
 /**
  * Extracts identity fields from an Emirates ID photo, for either the seller or
