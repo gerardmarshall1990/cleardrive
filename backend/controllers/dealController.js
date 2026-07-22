@@ -565,7 +565,13 @@ async function generateDocs(req, res) {
 
   const updates = { doc001_url: doc001.url, doc002_url: doc002.url };
   if (doc003) updates.doc003_url = doc003.url;
-  await supabaseAdmin.from('deals').update(updates).eq('id', deal.id);
+  const { error: updateError } = await supabaseAdmin.from('deals').update(updates).eq('id', deal.id);
+  if (updateError) {
+    // Previously unchecked — a DB error here (e.g. the varchar(500) overflow
+    // found in production) meant the response below claimed success with
+    // real URLs while the deal row silently kept its old/null doc00X_url.
+    return res.status(500).json({ error: `Documents were generated but failed to save: ${updateError.message}` });
+  }
 
   return res.json({
     generated: { doc001: doc001.url, doc002: doc002.url, doc003: doc003?.url || null, doc009: doc009?.url || null },

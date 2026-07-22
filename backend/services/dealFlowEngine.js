@@ -232,7 +232,21 @@ async function generateAndSendDocuments(deal, seller, buyer, partner) {
     });
   }
 
-  await supabaseAdmin.from('deals').update(updates).eq('id', deal.id);
+  const { error: updateError } = await supabaseAdmin.from('deals').update(updates).eq('id', deal.id);
+  if (updateError) {
+    // Previously unchecked — a DB error here (e.g. the varchar(500) overflow
+    // found in production, see 0005_widen_url_columns.sql) meant the deal
+    // silently kept doc00X_url as null forever, with no automation_log trace
+    // at all, even though onEnterStage's own try/catch only covers errors
+    // thrown by this function, not an ignored .update() error result.
+    logger.error('Failed to save generated document URLs', { dealRef: deal.ref, error: updateError.message });
+    await supabaseAdmin.from('automation_log').insert({
+      deal_id: deal.id,
+      action: 'document_urls_save',
+      status: 'failed',
+      payload: { error: updateError.message },
+    });
+  }
 }
 
 /**
