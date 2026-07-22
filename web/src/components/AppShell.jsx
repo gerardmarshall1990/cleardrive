@@ -41,6 +41,24 @@ export function AppShell({ children }) {
           <Link to={tabs[0]?.to || '/'}>
             <Logo size="sm" showTagline={false} />
           </Link>
+
+          {user && tabs.length > 0 && (
+            <nav className="hidden md:flex items-center gap-6">
+              {tabs.map((tab) => {
+                const active = location.pathname === tab.to;
+                return (
+                  <Link
+                    key={tab.to}
+                    to={tab.to}
+                    className={`text-sm font-sans font-semibold ${active ? 'text-gold' : 'text-white/60 hover:text-gold'}`}
+                  >
+                    {tab.label}
+                  </Link>
+                );
+              })}
+            </nav>
+          )}
+
           {user && (
             <div className="flex items-center gap-4">
               <span className="hidden sm:inline text-sm text-white/60 font-sans">{user.full_name}</span>
