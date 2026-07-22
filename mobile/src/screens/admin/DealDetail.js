@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { DarkCard } from '../../components/Card';
 import { Button } from '../../components/Button';
+import { Input } from '../../components/Input';
 import { Badge, ProductBadge } from '../../components/Badge';
 import { ErrorBanner, SuccessBanner } from '../../components/Alert';
 import { ProgressSteps } from '../../components/ProgressSteps';
@@ -11,12 +12,19 @@ import { formatAed } from '../../lib/feeCalculator';
 import { api } from '../../lib/api';
 import { colors, fonts } from '../../theme/theme';
 
+// Manual-override toggles — mirror backend/controllers/adminController.js's
+// OVERRIDABLE_FIELDS. Used to unblock deals while TrustIn KYC / SignNow
+// signing / Claude Vision fines extraction aren't yet live integrations (or
+// are currently failing), or when a verification/signature/payment was
+// collected outside the platform.
 const OVERRIDE_FIELDS = [
+  { key: 'fines_verified', label: 'Traffic fines verified' },
   { key: 'seller_kyc_complete', label: 'Seller KYC complete' },
   { key: 'buyer_kyc_complete', label: 'Buyer KYC complete' },
   { key: 'doc001_signed', label: 'DOC-001 signed (Transaction & Escrow Agreement)' },
   { key: 'doc002_signed', label: 'DOC-002 signed (Limited Power of Attorney)' },
   { key: 'doc003_signed', label: 'DOC-003 signed (Referral Agreement)', requiresPartner: true },
+  { key: 'funds_confirmed', label: 'Escrow funds confirmed received' },
 ];
 
 export default function AdminDealDetail({ route }) {
@@ -25,10 +33,12 @@ export default function AdminDealDetail({ route }) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [saving, setSaving] = useState(false);
+  const [finesAmount, setFinesAmount] = useState('');
+  const [transferCertUrl, setTransferCertUrl] = useState('');
 
   const load = useCallback(async () => {
     try {
-      const { deal } = await api.get(`/api/deals/${id}`);
+      const { deal } = await api.get(`/api/admin/deals/${id}`);
       setDeal(deal);
     } catch (err) {
       setError(err.message);
@@ -44,9 +54,32 @@ export default function AdminDealDetail({ route }) {
     setError('');
     setSuccess('');
     try {
-      const { deal: updated } = await api.put(`/api/admin/deals/${id}/override`, { [field]: !deal[field] });
+      const body = { [field]: !deal[field] };
+      // If admin is marking fines as verified and has entered a figure, include it
+      // so cd_fee/net_proceeds get recalculated the same way the automated path does.
+      if (field === 'fines_verified' && !deal.fines_verified && finesAmount !== '') {
+        body.finesAmount = Number(finesAmount);
+      }
+      const { deal: updated } = await api.put(`/api/admin/deals/${id}/override`, body);
       setDeal(updated);
       setSuccess('Updated');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function submitTransferCert() {
+    if (!transferCertUrl.trim()) return;
+    setSaving(true);
+    setError('');
+    setSuccess('');
+    try {
+      const { deal: updated } = await api.put(`/api/admin/deals/${id}/override`, { transferCertUrl: transferCertUrl.trim() });
+      setDeal(updated);
+      setSuccess('Transfer certificate saved');
+      setTransferCertUrl('');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -76,6 +109,20 @@ export default function AdminDealDetail({ route }) {
 
       <ProgressSteps currentStage={deal.status} accent={accent} />
 
+      {deal.blockedOn?.length > 0 && (
+        <DarkCard style={[styles.blockedCard, { marginTop: 16 }]}>
+          <Text style={styles.blockedTitle}>Why this deal is stuck at "{STAGE_LABELS[deal.status] || deal.status}"</Text>
+          <View style={{ gap: 6 }}>
+            {deal.blockedOn.map((b) => (
+              <View key={b.field} style={styles.blockedRow}>
+                <Text style={styles.blockedDot}>●</Text>
+                <Text style={styles.blockedLabel}>{b.label}</Text>
+              </View>
+            ))}
+          </View>
+        </DarkCard>
+      )}
+
       <DarkCard style={{ marginTop: 16 }}>
         <Text style={styles.cardTitle}>Deal summary</Text>
         <Row label="Sale price" value={formatAed(deal.sale_price)} />
@@ -100,19 +147,52 @@ export default function AdminDealDetail({ route }) {
         <SuccessBanner message={success} />
         <View style={{ gap: 10 }}>
           {OVERRIDE_FIELDS.filter((f) => !f.requiresPartner || deal.referral_partner_id).map((f) => (
-            <View key={f.key} style={styles.overrideRow}>
-              <Text style={styles.overrideLabel}>{f.label}</Text>
-              <Button
-                variant={deal[f.key] ? 'secondary' : accent}
-                loading={saving}
-                onPress={() => toggleField(f.key)}
-                style={styles.overrideBtn}
-              >
-                {deal[f.key] ? 'Undo' : 'Mark complete'}
-              </Button>
+            <View key={f.key} style={styles.overrideItem}>
+              <View style={styles.overrideRow}>
+                <Text style={styles.overrideLabel}>{f.label}</Text>
+                <Button
+                  variant={deal[f.key] ? 'secondary' : accent}
+                  loading={saving}
+                  onPress={() => toggleField(f.key)}
+                  style={styles.overrideBtn}
+                >
+                  {deal[f.key] ? 'Undo' : 'Mark complete'}
+                </Button>
+              </View>
+              {f.key === 'fines_verified' && !deal.fines_verified && (
+                <Input
+                  label="Fines amount (AED) — optional, e.g. read off the RTA screenshot yourself"
+                  keyboardType="numeric"
+                  value={finesAmount}
+                  onChangeText={setFinesAmount}
+                  style={{ marginTop: 12 }}
+                />
+              )}
             </View>
           ))}
         </View>
+
+        {deal.status === 'tasjeel' && !deal.transfer_cert_url && (
+          <View style={styles.transferForm}>
+            <Text style={styles.overrideLabel}>Tasjeel transfer certificate URL/reference</Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+              <Input
+                value={transferCertUrl}
+                onChangeText={setTransferCertUrl}
+                placeholder="https://... or manual reference"
+                style={{ flex: 1 }}
+              />
+              <Button variant={accent} loading={saving} onPress={submitTransferCert} style={styles.overrideBtn}>
+                Save
+              </Button>
+            </View>
+          </View>
+        )}
+        {deal.transfer_cert_url && (
+          <Text style={styles.transferCaption}>
+            Transfer certificate on file: <Text style={{ fontFamily: 'monospace' }}>{deal.transfer_cert_url}</Text>
+          </Text>
+        )}
       </DarkCard>
 
       <View style={{ marginTop: 24 }}>
@@ -158,8 +238,16 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
   rowLabel: { fontFamily: fonts.sans, fontSize: 13, color: colors.white50 },
   rowValue: { fontFamily: fonts.sansSemiBold, fontSize: 13, color: colors.white },
-  overrideRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: 10, borderWidth: 1, borderColor: colors.white8, backgroundColor: colors.white4, padding: 12, gap: 8 },
+  overrideItem: { borderRadius: 10, borderWidth: 1, borderColor: colors.white8, backgroundColor: colors.white4, padding: 12 },
+  overrideRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   overrideLabel: { fontFamily: fonts.sans, fontSize: 12, color: colors.white70, flex: 1 },
   overrideBtn: { paddingVertical: 8, paddingHorizontal: 14 },
   timelineHeading: { fontFamily: fonts.sansBold, fontSize: 11, color: colors.white40, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 },
+  blockedCard: { borderWidth: 1, borderColor: 'rgba(239,68,68,0.3)', backgroundColor: 'rgba(239,68,68,0.06)' },
+  blockedTitle: { fontFamily: fonts.display, fontSize: 15, color: colors.white, marginBottom: 8 },
+  blockedRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  blockedDot: { color: colors.error, marginTop: 2, fontSize: 12 },
+  blockedLabel: { fontFamily: fonts.sans, fontSize: 13, color: colors.white70, flex: 1 },
+  transferForm: { marginTop: 16, borderRadius: 10, borderWidth: 1, borderColor: colors.white8, backgroundColor: colors.white4, padding: 12 },
+  transferCaption: { fontFamily: fonts.sans, fontSize: 11, color: colors.white40, marginTop: 12 },
 });

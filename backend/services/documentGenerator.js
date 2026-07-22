@@ -11,6 +11,7 @@ const PDFDocument = require('pdfkit');
 const fs = require('fs');
 const path = require('path');
 const { formatDubai } = require('../utils/timezone');
+const { uploadGeneratedDoc } = require('./storageService');
 
 const OUTPUT_DIR = path.join(__dirname, '..', 'generated-docs');
 if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
@@ -78,13 +79,23 @@ function footer(doc, generatedRef) {
   doc.fontSize(8).fillColor(MUTED).text(`Generated ${formatDubai(new Date())} (Asia/Dubai) — ${generatedRef}`, { align: 'center' });
 }
 
-function saveAndFinish(doc, filename) {
+function saveAndFinish(doc, filename, dealId) {
   return new Promise((resolve, reject) => {
     const filePath = path.join(OUTPUT_DIR, filename);
     const stream = fs.createWriteStream(filePath);
     doc.pipe(stream);
     doc.end();
-    stream.on('finish', () => resolve(filePath));
+    stream.on('finish', async () => {
+      try {
+        // filePath is still needed locally by the caller (e.g. SignNow upload,
+        // which reads the file straight off disk) — url is the durable,
+        // client-fetchable reference persisted on the deal.
+        const url = await uploadGeneratedDoc(filePath, `${dealId}/${filename}`);
+        resolve({ filePath, url });
+      } catch (err) {
+        reject(err);
+      }
+    });
     stream.on('error', reject);
   });
 }
@@ -95,7 +106,7 @@ function saveAndFinish(doc, filename) {
  * @param {object} deal - full deal row joined with seller/buyer user data
  * @param {object} seller - user row
  * @param {object} buyer - user row
- * @returns {Promise<string>} generated PDF file path
+ * @returns {Promise<{filePath: string, url: string}>} local file path (for SignNow upload) + durable storage URL (persisted on the deal)
  */
 async function generateDoc001(deal, seller, buyer) {
   const doc = newDoc();
@@ -174,7 +185,7 @@ async function generateDoc001(deal, seller, buyer) {
   doc.text(`Buyer: ${buyer?.full_name || ''}      Date: __________`, 50, doc.y + 5);
 
   footer(doc, 'DOC-001');
-  return saveAndFinish(doc, `${deal.ref}_DOC-001_Transaction-Escrow-Agreement.pdf`);
+  return saveAndFinish(doc, `${deal.ref}_DOC-001_Transaction-Escrow-Agreement.pdf`, deal.id);
 }
 
 // ---------- DOC-002: Limited Power of Attorney ----------
@@ -203,18 +214,29 @@ async function generateDoc002(deal, seller) {
     `The Grantor hereby grants ${COMPANY.name} limited authority, solely in connection with Deal Reference ${deal.ref}, to act on the Grantor's ` +
     'behalf for the following purposes only:'
   );
-  const powers = [
-    `Obtain the loan settlement figure from ${deal.loan_bank || 'the financing bank'} in respect of the above vehicle.`,
-    `Instruct ${COMPANY.escrowPartner} to pay the outstanding loan balance directly to ${deal.loan_bank || 'the financing bank'} from escrowed funds.`,
-    `Collect the No Objection Certificate (NOC) / mortgage release letter from ${deal.loan_bank || 'the financing bank'} upon settlement.`,
+  // Loan settlement/NOC/mortgage-release powers only apply to LoanClear deals —
+  // SafePay has no bank loan to settle, so a SafePay POA should never grant
+  // authority over a loan that doesn't exist.
+  const powers = [];
+  if (deal.product === 'loanclear') {
+    powers.push(
+      `Obtain the loan settlement figure from ${deal.loan_bank || 'the financing bank'} in respect of the above vehicle.`,
+      `Instruct ${COMPANY.escrowPartner} to pay the outstanding loan balance directly to ${deal.loan_bank || 'the financing bank'} from escrowed funds.`,
+      `Collect the No Objection Certificate (NOC) / mortgage release letter from ${deal.loan_bank || 'the financing bank'} upon settlement.`
+    );
+  }
+  powers.push(
     `Instruct ${COMPANY.escrowPartner} to pay any outstanding RTA traffic fines on the vehicle from escrowed funds.`,
-    `Deduct the agreed ClearDrive Fee (${formatAed(deal.cd_fee)}) from the escrow balance prior to release of Net Proceeds.`,
-    'Coordinate directly with the RTA to remove the mortgage/finance interest recorded against the vehicle following loan settlement.',
-  ];
+    `Deduct the agreed ClearDrive Fee (${formatAed(deal.cd_fee)}) from the escrow balance prior to release of Net Proceeds.`
+  );
+  if (deal.product === 'loanclear') {
+    powers.push('Coordinate directly with the RTA to remove the mortgage/finance interest recorded against the vehicle following loan settlement.');
+  }
   powers.forEach((p, i) => paragraph(doc, `${i + 1}. ${p}`));
 
+  const numberWords = { 2: 'two', 3: 'three', 4: 'four', 5: 'five', 6: 'six' };
   paragraph(doc,
-    'This Power of Attorney is strictly limited to the six (6) purposes listed above, is valid only for the duration of Deal Reference ' +
+    `This Power of Attorney is strictly limited to the ${numberWords[powers.length] || powers.length} (${powers.length}) purposes listed above, is valid only for the duration of Deal Reference ` +
     `${deal.ref}, and does not grant any authority to sell, transfer, or otherwise dispose of the vehicle on the Grantor's behalf.`
   );
 
@@ -224,7 +246,7 @@ async function generateDoc002(deal, seller) {
   doc.text(`Grantor (Seller): ${seller?.full_name || ''}      Date: __________`, 50, doc.y + 5);
 
   footer(doc, 'DOC-002');
-  return saveAndFinish(doc, `${deal.ref}_DOC-002_Limited-Power-of-Attorney.pdf`);
+  return saveAndFinish(doc, `${deal.ref}_DOC-002_Limited-Power-of-Attorney.pdf`, deal.id);
 }
 
 // ---------- DOC-003: Broker Referral Agreement ----------
@@ -263,7 +285,7 @@ async function generateDoc003(deal, partner) {
   doc.text(`ClearDrive: ${COMPANY.signatory}      Date: __________`, 50, doc.y + 5);
 
   footer(doc, 'DOC-003');
-  return saveAndFinish(doc, `${deal.ref}_DOC-003_Broker-Referral-Agreement.pdf`);
+  return saveAndFinish(doc, `${deal.ref}_DOC-003_Broker-Referral-Agreement.pdf`, deal.id);
 }
 
 // ---------- DOC-009: Buyer Payment Instruction ----------
@@ -294,7 +316,7 @@ async function generateDoc009(deal) {
   );
 
   footer(doc, 'DOC-009');
-  return saveAndFinish(doc, `${deal.ref}_DOC-009_Buyer-Payment-Instruction.pdf`);
+  return saveAndFinish(doc, `${deal.ref}_DOC-009_Buyer-Payment-Instruction.pdf`, deal.id);
 }
 
 function formatAed(value) {

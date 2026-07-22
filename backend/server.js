@@ -29,7 +29,11 @@ const app = express();
 app.use(helmet());
 app.use(cors());
 app.use(morgan('dev'));
-app.use(express.json({ limit: '15mb' })); // generous limit — fines screenshots are sent as base64
+// verify captures the raw request bytes onto req.rawBody — needed so webhook
+// signature verification (middleware/webhookSignature.js) can HMAC the exact
+// payload a provider signed, rather than a re-serialized (possibly
+// byte-different) JSON.stringify(req.body).
+app.use(express.json({ limit: '15mb', verify: (req, res, buf) => { req.rawBody = buf; } })); // generous limit — fines screenshots are sent as base64
 app.use(express.urlencoded({ extended: true }));
 
 app.get('/health', (req, res) => res.json({ status: 'ok', service: 'cleardrive-backend', time: new Date().toISOString() }));

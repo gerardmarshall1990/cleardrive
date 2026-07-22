@@ -49,8 +49,11 @@ async function signup(req, res) {
     .single();
 
   if (userErr) {
-    logger.error('Failed to create app user row after auth signup', { error: userErr.message });
     await supabaseAdmin.auth.admin.deleteUser(created.user.id); // roll back orphaned auth user
+    if (userErr.code === '23505') {
+      return res.status(409).json({ error: 'An account with this phone number already exists' });
+    }
+    logger.error('Failed to create app user row after auth signup', { error: userErr.message });
     return res.status(500).json({ error: 'Could not complete signup — please try again' });
   }
 
@@ -61,9 +64,12 @@ async function signup(req, res) {
   if (role === 'dealer' || role === 'broker') {
     const { error: partnerErr } = await supabaseAdmin.from('partners').insert({ name: fullName, phone, email, type: role });
     if (partnerErr) {
-      logger.error('Failed to create partner row after auth signup', { error: partnerErr.message });
       await supabaseAdmin.from('users').delete().eq('id', appUser.id);
       await supabaseAdmin.auth.admin.deleteUser(created.user.id);
+      if (partnerErr.code === '23505') {
+        return res.status(409).json({ error: 'A partner account with this phone number already exists' });
+      }
+      logger.error('Failed to create partner row after auth signup', { error: partnerErr.message });
       return res.status(500).json({ error: 'Could not complete signup — please try again' });
     }
   }

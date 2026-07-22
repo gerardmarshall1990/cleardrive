@@ -12,9 +12,9 @@ const whatsAppService = require('../services/whatsAppService');
 const emailService = require('../services/emailService');
 const { STAGES, stageIndex } = require('../utils/dealStages');
 const logger = require('../utils/logger');
+const { APP_BASE_URL } = require('../config/appBaseUrl');
 
 const SAFEPAY_MIN_SALE_PRICE = 100000;
-const APP_BASE_URL = process.env.APP_BASE_URL || 'http://localhost:5173';
 
 /**
  * Looks up an existing individual account by phone number to attach as the
@@ -52,6 +52,47 @@ async function resolveOwnPartnerId(appUser) {
   if (appUser.role !== 'dealer' && appUser.role !== 'broker') return null;
   const { data: partner } = await supabaseAdmin.from('partners').select('id').eq('phone', appUser.phone).eq('type', appUser.role).maybeSingle();
   return partner?.id || null;
+}
+
+/**
+ * Resolves whether the calling user may view/act on a given deal — a party
+ * (seller/buyer), the dealer/broker who referred it, or an admin. Used to
+ * scope every deal-level endpoint below so an authenticated user can't read
+ * or mutate someone else's deal just by guessing/incrementing an ID.
+ */
+async function getDealAccess(deal, appUser) {
+  const isSeller = deal.seller_id === appUser.id;
+  const isBuyer = deal.buyer_id === appUser.id;
+  const isAdmin = appUser.role === 'admin';
+  let isReferringPartner = false;
+  if (!isSeller && !isBuyer && !isAdmin && deal.referral_partner_id) {
+    const ownPartnerId = await resolveOwnPartnerId(appUser);
+    isReferringPartner = ownPartnerId !== null && ownPartnerId === deal.referral_partner_id;
+  }
+  return { isSeller, isBuyer, isAdmin, isReferringPartner };
+}
+
+const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8MB — generous for a phone photo, well under Claude Vision's per-image limit
+
+/**
+ * Shared guard for the four Claude Vision upload endpoints below (fines,
+ * Mulkiya, settlement letter, Emirates ID) — rejects unsupported file types
+ * and oversized payloads before spending a Vision API call on them. Previously
+ * unvalidated: any authenticated user could POST arbitrary base64 data of any
+ * size/type here, an open cost/abuse vector.
+ */
+function validateImageUpload(imageBase64, mediaType) {
+  if (mediaType && !ALLOWED_IMAGE_TYPES.includes(mediaType)) {
+    return `Unsupported image type "${mediaType}" — use JPEG, PNG, WEBP, or HEIC`;
+  }
+  // Rough decoded size from base64 length (4 chars ~= 3 bytes) — good enough
+  // to reject grossly oversized uploads without a full decode.
+  const approxBytes = (imageBase64.length * 3) / 4;
+  if (approxBytes > MAX_IMAGE_BYTES) {
+    return 'Image is too large — please upload a photo under 8MB';
+  }
+  return null;
 }
 
 /**
@@ -285,6 +326,12 @@ async function attachBuyer(req, res) {
   const { buyerPhone } = req.body;
   if (!buyerPhone) return res.status(400).json({ error: 'buyerPhone is required' });
 
+  const { data: deal, error: dealErr } = await supabaseAdmin.from('deals').select('id, seller_id').eq('id', req.params.id).single();
+  if (dealErr || !deal) return res.status(404).json({ error: 'Deal not found' });
+  if (deal.seller_id !== req.appUser.id) {
+    return res.status(403).json({ error: 'Only the seller can attach a buyer' });
+  }
+
   const { buyerId, error: buyerErr } = await resolveBuyerId(buyerPhone);
   if (buyerErr) return res.status(400).json({ error: buyerErr });
 
@@ -310,10 +357,16 @@ async function listMine(req, res) {
   return res.json({ deals });
 }
 
-/** GET /api/deals/:id */
+/** GET /api/deals/:id — seller, buyer, the referring partner, or admin only. */
 async function getDeal(req, res) {
   const { data: deal, error } = await supabaseAdmin.from('deals').select('*').eq('id', req.params.id).single();
   if (error || !deal) return res.status(404).json({ error: 'Deal not found' });
+
+  const { isSeller, isBuyer, isAdmin, isReferringPartner } = await getDealAccess(deal, req.appUser);
+  if (!isSeller && !isBuyer && !isAdmin && !isReferringPartner) {
+    return res.status(403).json({ error: 'You do not have access to this deal' });
+  }
+
   return res.json({ deal });
 }
 
@@ -321,6 +374,14 @@ async function getDeal(req, res) {
 async function advanceStage(req, res) {
   const { targetStage } = req.body;
   if (!targetStage) return res.status(400).json({ error: 'targetStage is required' });
+
+  const { data: deal, error: dealErr } = await supabaseAdmin.from('deals').select('*').eq('id', req.params.id).single();
+  if (dealErr || !deal) return res.status(404).json({ error: 'Deal not found' });
+
+  const { isSeller, isBuyer, isAdmin, isReferringPartner } = await getDealAccess(deal, req.appUser);
+  if (!isSeller && !isBuyer && !isAdmin && !isReferringPartner) {
+    return res.status(403).json({ error: 'You are not a party to this deal' });
+  }
 
   try {
     const updated = await dealFlowEngine.advanceStage(req.params.id, targetStage);
@@ -338,9 +399,14 @@ async function advanceStage(req, res) {
 async function verifyFines(req, res) {
   const { imageBase64, mediaType } = req.body;
   if (!imageBase64) return res.status(400).json({ error: 'imageBase64 is required' });
+  const imageError = validateImageUpload(imageBase64, mediaType);
+  if (imageError) return res.status(400).json({ error: imageError });
 
   const { data: deal, error } = await supabaseAdmin.from('deals').select('*').eq('id', req.params.id).single();
   if (error || !deal) return res.status(404).json({ error: 'Deal not found' });
+  if (deal.seller_id !== req.appUser.id) {
+    return res.status(403).json({ error: 'Only the seller can verify fines' });
+  }
 
   const result = await finesVerification.verifyFinesScreenshot({ imageBase64, mediaType, expectedPlate: deal.plate });
 
@@ -377,9 +443,14 @@ async function verifyFines(req, res) {
 async function extractMulkiya(req, res) {
   const { imageBase64, mediaType } = req.body;
   if (!imageBase64) return res.status(400).json({ error: 'imageBase64 is required' });
+  const imageError = validateImageUpload(imageBase64, mediaType);
+  if (imageError) return res.status(400).json({ error: imageError });
 
-  const { data: deal, error } = await supabaseAdmin.from('deals').select('id').eq('id', req.params.id).single();
+  const { data: deal, error } = await supabaseAdmin.from('deals').select('id, seller_id').eq('id', req.params.id).single();
   if (error || !deal) return res.status(404).json({ error: 'Deal not found' });
+  if (deal.seller_id !== req.appUser.id) {
+    return res.status(403).json({ error: 'Only the seller can upload the Mulkiya' });
+  }
 
   const result = await documentVision.extractMulkiya({ imageBase64, mediaType });
   if (!result.success) return res.status(422).json({ extracted: false, error: result.reason, reason: result.reason });
@@ -398,9 +469,14 @@ async function extractMulkiya(req, res) {
 async function extractSettlement(req, res) {
   const { imageBase64, mediaType } = req.body;
   if (!imageBase64) return res.status(400).json({ error: 'imageBase64 is required' });
+  const imageError = validateImageUpload(imageBase64, mediaType);
+  if (imageError) return res.status(400).json({ error: imageError });
 
-  const { data: deal, error } = await supabaseAdmin.from('deals').select('id, product').eq('id', req.params.id).single();
+  const { data: deal, error } = await supabaseAdmin.from('deals').select('id, product, seller_id').eq('id', req.params.id).single();
   if (error || !deal) return res.status(404).json({ error: 'Deal not found' });
+  if (deal.seller_id !== req.appUser.id) {
+    return res.status(403).json({ error: 'Only the seller can upload the settlement letter' });
+  }
   if (deal.product !== 'loanclear') return res.status(400).json({ error: 'Settlement letter extraction only applies to LoanClear deals' });
 
   const result = await documentVision.extractSettlementLetter({ imageBase64, mediaType });
@@ -418,9 +494,14 @@ async function extractSettlement(req, res) {
 async function extractEid(req, res) {
   const { imageBase64, mediaType } = req.body;
   if (!imageBase64) return res.status(400).json({ error: 'imageBase64 is required' });
+  const imageError = validateImageUpload(imageBase64, mediaType);
+  if (imageError) return res.status(400).json({ error: imageError });
 
-  const { data: deal, error } = await supabaseAdmin.from('deals').select('id').eq('id', req.params.id).single();
+  const { data: deal, error } = await supabaseAdmin.from('deals').select('id, seller_id, buyer_id').eq('id', req.params.id).single();
   if (error || !deal) return res.status(404).json({ error: 'Deal not found' });
+  if (deal.seller_id !== req.appUser.id && deal.buyer_id !== req.appUser.id) {
+    return res.status(403).json({ error: 'You are not a party to this deal' });
+  }
 
   const result = await documentVision.extractEmiratesId({ imageBase64, mediaType });
   if (!result.success) return res.status(422).json({ extracted: false, error: result.reason, reason: result.reason });
@@ -467,6 +548,9 @@ async function confirmKyc(req, res) {
 async function generateDocs(req, res) {
   const { data: deal, error } = await supabaseAdmin.from('deals').select('*').eq('id', req.params.id).single();
   if (error || !deal) return res.status(404).json({ error: 'Deal not found' });
+  if (deal.seller_id !== req.appUser.id && req.appUser.role !== 'admin') {
+    return res.status(403).json({ error: 'Only the seller or an admin can (re)generate documents' });
+  }
 
   const [{ data: seller }, { data: buyer }, { data: partner }] = await Promise.all([
     deal.seller_id ? supabaseAdmin.from('users').select('*').eq('id', deal.seller_id).single() : { data: null },
@@ -479,23 +563,30 @@ async function generateDocs(req, res) {
   const doc003 = partner ? await docGen.generateDoc003(deal, partner) : null;
   const doc009 = deal.trustin_escrow_iban ? await docGen.generateDoc009(deal) : null;
 
-  const updates = { doc001_url: doc001, doc002_url: doc002 };
-  if (doc003) updates.doc003_url = doc003;
+  const updates = { doc001_url: doc001.url, doc002_url: doc002.url };
+  if (doc003) updates.doc003_url = doc003.url;
   await supabaseAdmin.from('deals').update(updates).eq('id', deal.id);
 
-  return res.json({ generated: { doc001, doc002, doc003, doc009 } });
+  return res.json({
+    generated: { doc001: doc001.url, doc002: doc002.url, doc003: doc003?.url || null, doc009: doc009?.url || null },
+  });
 }
 
 /** GET /api/deals/:id/docs — returns current document generation/signing status. */
 async function getDocs(req, res) {
   const { data: deal, error } = await supabaseAdmin
     .from('deals')
-    .select('doc001_url, doc001_signed, doc002_url, doc002_signed, doc003_url, doc003_signed, transfer_cert_url')
+    .select('seller_id, buyer_id, doc001_url, doc001_signed, doc002_url, doc002_signed, doc003_url, doc003_signed, transfer_cert_url')
     .eq('id', req.params.id)
     .single();
 
   if (error || !deal) return res.status(404).json({ error: 'Deal not found' });
-  return res.json({ docs: deal });
+  if (deal.seller_id !== req.appUser.id && deal.buyer_id !== req.appUser.id && req.appUser.role !== 'admin') {
+    return res.status(403).json({ error: 'You do not have access to this deal' });
+  }
+
+  const { seller_id, buyer_id, ...docs } = deal;
+  return res.json({ docs });
 }
 
 /**
@@ -506,6 +597,12 @@ async function getDocs(req, res) {
 async function completeDeal(req, res) {
   const { transferCertUrl } = req.body;
   if (!transferCertUrl) return res.status(400).json({ error: 'transferCertUrl is required' });
+
+  const { data: deal, error: dealErr } = await supabaseAdmin.from('deals').select('id, seller_id').eq('id', req.params.id).single();
+  if (dealErr || !deal) return res.status(404).json({ error: 'Deal not found' });
+  if (deal.seller_id !== req.appUser.id) {
+    return res.status(403).json({ error: 'Only the seller can submit the transfer certificate' });
+  }
 
   const { error: updateErr } = await supabaseAdmin.from('deals').update({ transfer_cert_url: transferCertUrl }).eq('id', req.params.id);
   if (updateErr) return res.status(500).json({ error: 'Could not save transfer certificate — please try again' });
@@ -544,6 +641,9 @@ const DETAILS_ALLOWED_FIELDS = [
 async function updateDetails(req, res) {
   const { data: deal, error } = await supabaseAdmin.from('deals').select('*').eq('id', req.params.id).single();
   if (error || !deal) return res.status(404).json({ error: 'Deal not found' });
+  if (deal.seller_id !== req.appUser.id) {
+    return res.status(403).json({ error: 'Only the seller can edit these details' });
+  }
 
   const updates = {};
   for (const field of DETAILS_ALLOWED_FIELDS) {
@@ -627,7 +727,7 @@ async function editDealDetails(req, res) {
       supabaseAdmin.from('users').select('*').eq('id', deal.seller_id).single(),
       deal.buyer_id ? supabaseAdmin.from('users').select('*').eq('id', deal.buyer_id).single() : { data: null },
     ]);
-    updates.doc001_url = await docGen.generateDoc001(dealForDoc, seller, buyer);
+    updates.doc001_url = (await docGen.generateDoc001(dealForDoc, seller, buyer)).url;
     updates.doc001_signed = false;
     updates.doc001_signnow_id = null;
   }

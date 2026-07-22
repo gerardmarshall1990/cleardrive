@@ -13,6 +13,7 @@ const signNow = require('./signNowService');
 const docGen = require('./documentGenerator');
 const feeCalculator = require('./feeCalculator');
 const logger = require('../utils/logger');
+const { APP_BASE_URL } = require('../config/appBaseUrl');
 
 /**
  * Fields required to be present on the deal record before it may advance
@@ -35,6 +36,20 @@ function validateRequiredFields(deal, fromStage) {
     if (typeof value === 'boolean') return value !== true;
     return value === null || value === undefined || value === '';
   });
+
+  // ESCROW's real exit requirement (loan + fines actually settled, not just
+  // funds received) is conditional on product — LoanClear needs loan_cleared,
+  // SafePay has no bank loan to clear — which the static field list above
+  // can't express. Previously only funds_confirmed was checked here, letting
+  // a deal reach TASJEEL before the loan/fines were actually paid off; the
+  // real check lived only in trustInWebhook.maybeAdvanceToTasjeel, a separate
+  // code path that the generic PUT /:id/stage route and admin override never
+  // went through. Layering it on here closes that gap for every caller.
+  if (fromStage === STAGES.ESCROW) {
+    if (deal.product === 'loanclear' && deal.loan_cleared !== true) missing.push('loan_cleared');
+    if (deal.fines_cleared !== true) missing.push('fines_cleared');
+  }
+
   return missing;
 }
 
@@ -72,14 +87,29 @@ async function advanceStage(dealId, targetStage) {
     throw new Error(`Cannot leave stage "${deal.status}" — missing required fields: ${missing.join(', ')}`);
   }
 
+  // Optimistic-concurrency guard: only commit if the deal's status is still
+  // exactly what we just read it as. Without the extra .eq('status', ...)
+  // here, two concurrent advanceStage calls for the same deal (e.g. a webhook
+  // firing at the same moment as a manual admin override) could both pass the
+  // validation above against the same stale snapshot and both write, running
+  // onEnterStage's automation (WhatsApp sends, doc generation, TrustIn calls)
+  // twice for a single real transition. If the row no longer matches (another
+  // request already advanced it), this update matches zero rows and .single()
+  // errors out below instead of silently double-processing.
   const { data: updated, error } = await supabaseAdmin
     .from('deals')
     .update({ status: targetStage })
     .eq('id', dealId)
+    .eq('status', deal.status)
     .select()
     .single();
 
-  if (error) throw new Error(`Failed to update deal stage: ${error.message}`);
+  if (error) {
+    if (error.code === 'PGRST116') {
+      throw new Error('This deal was just updated by another action — please refresh and try again');
+    }
+    throw new Error(`Failed to update deal stage: ${error.message}`);
+  }
 
   logger.info(`Deal ${deal.ref} advanced ${deal.status} -> ${targetStage}`);
 
@@ -116,8 +146,8 @@ async function onEnterStage(deal, { seller, buyer, partner }) {
 
     case STAGES.KYC: {
       // In production these links point at TrustIn's UAE Pass KYC flow for this deal.
-      const sellerLink = `${process.env.APP_BASE_URL || 'https://app.cleardriveuae.com'}/kyc/${deal.id}/seller`;
-      const buyerLink = `${process.env.APP_BASE_URL || 'https://app.cleardriveuae.com'}/kyc/${deal.id}/buyer`;
+      const sellerLink = `${APP_BASE_URL}/kyc/${deal.id}/seller`;
+      const buyerLink = `${APP_BASE_URL}/kyc/${deal.id}/buyer`;
       await whatsApp.sendKycLink(deal, seller?.phone, 'seller', sellerLink);
       if (buyer?.phone) await whatsApp.sendKycLink(deal, buyer.phone, 'buyer', buyerLink);
       break;
@@ -161,23 +191,23 @@ async function onEnterStage(deal, { seller, buyer, partner }) {
  * uploads each to SignNow, and sends signing links to the correct parties.
  */
 async function generateAndSendDocuments(deal, seller, buyer, partner) {
-  const doc001Path = await docGen.generateDoc001(deal, seller, buyer);
-  const doc002Path = await docGen.generateDoc002(deal, seller);
+  const doc001 = await docGen.generateDoc001(deal, seller, buyer);
+  const doc002 = await docGen.generateDoc002(deal, seller);
 
-  const updates = { doc001_url: doc001Path, doc002_url: doc002Path };
+  const updates = { doc001_url: doc001.url, doc002_url: doc002.url };
 
-  let doc003Path = null;
+  let doc003 = null;
   if (partner) {
-    doc003Path = await docGen.generateDoc003(deal, partner);
-    updates.doc003_url = doc003Path;
+    doc003 = await docGen.generateDoc003(deal, partner);
+    updates.doc003_url = doc003.url;
   }
 
   // SignNow upload/invite requires SIGNNOW_CLIENT_ID/SECRET — if not configured,
   // we still generate the PDFs above and store them; signing links are skipped
   // with a clear log entry rather than throwing and losing the generated docs.
   try {
-    const doc001Id = await signNow.uploadDocument(doc001Path);
-    const doc002Id = await signNow.uploadDocument(doc002Path);
+    const doc001Id = await signNow.uploadDocument(doc001.filePath);
+    const doc002Id = await signNow.uploadDocument(doc002.filePath);
     updates.doc001_signnow_id = doc001Id;
     updates.doc002_signnow_id = doc002Id;
 
@@ -187,15 +217,14 @@ async function generateAndSendDocuments(deal, seller, buyer, partner) {
     ]);
     await signNow.sendSigningInvite(doc002Id, [{ email: seller?.email, role: 'Seller', order: 1 }]);
 
-    if (doc003Path && partner) {
-      const doc003Id = await signNow.uploadDocument(doc003Path);
+    if (doc003 && partner) {
+      const doc003Id = await signNow.uploadDocument(doc003.filePath);
       updates.doc003_signnow_id = doc003Id;
       await signNow.sendSigningInvite(doc003Id, [{ email: partner.email, role: 'Partner', order: 1 }]);
     }
 
-    const appBase = process.env.APP_BASE_URL || 'https://app.cleardriveuae.com';
-    await whatsApp.sendSigningLink(deal, seller?.phone, 'seller', `${appBase}/sign/${deal.id}/seller`);
-    if (buyer?.phone) await whatsApp.sendSigningLink(deal, buyer.phone, 'buyer', `${appBase}/sign/${deal.id}/buyer`);
+    await whatsApp.sendSigningLink(deal, seller?.phone, 'seller', `${APP_BASE_URL}/sign/${deal.id}/seller`);
+    if (buyer?.phone) await whatsApp.sendSigningLink(deal, buyer.phone, 'buyer', `${APP_BASE_URL}/sign/${deal.id}/buyer`);
   } catch (err) {
     logger.warn('SignNow upload/invite skipped or failed — documents generated but not yet dispatched for signature', {
       dealRef: deal.ref,
@@ -216,7 +245,11 @@ async function completeDeal(deal, seller, buyer, partner) {
   if (partner && deal.referral_fee && !deal.referral_fee_paid) {
     // Real payment execution to partners is a manual/finance-team action in
     // MVP — here we mark it pending and notify, per "within 5 business days" in the spec.
+    // deals.referral_fee_paid must be flipped here too (previously only ever
+    // read, never written) — otherwise it's permanently false, so a partner's
+    // "earnings this month" always computes to 0 in getPartnerDeals.
     await whatsApp.sendReferralFeePaid(deal, partner);
+    await supabaseAdmin.from('deals').update({ referral_fee_paid: true }).eq('id', deal.id);
     await supabaseAdmin
       .from('partners')
       .update({

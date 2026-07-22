@@ -8,6 +8,7 @@ import { stackScreenOptions } from './navConfig';
 import Welcome from '../screens/auth/Welcome';
 import Login from '../screens/auth/Login';
 import Signup from '../screens/auth/Signup';
+import JoinDeal from '../screens/auth/JoinDeal';
 import { IndividualTabs } from './IndividualTabs';
 import { AdminTabs } from './AdminTabs';
 import { PartnerTabs } from './PartnerTabs';
@@ -21,6 +22,19 @@ const TABS_BY_ROLE = {
   broker: PartnerTabs,
 };
 
+// Custom scheme registered in app.json ("scheme": "cleardrive"). Lets a
+// join link (cleardrive://join/:dealId/:role) — the mobile counterpart of
+// the emailed/WhatsApp'd web join link — open straight to the JoinDeal
+// screen regardless of whether the app is currently logged in or out.
+const linking = {
+  prefixes: ['cleardrive://'],
+  config: {
+    screens: {
+      JoinDeal: 'join/:dealId/:role',
+    },
+  },
+};
+
 export function RootNavigator() {
   const { user, loading } = useAuth();
 
@@ -32,22 +46,22 @@ export function RootNavigator() {
     );
   }
 
-  if (!user) {
-    return (
-      <NavigationContainer>
-        <Stack.Navigator screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="Welcome" component={Welcome} />
-          <Stack.Screen name="Login" component={Login} />
-          <Stack.Screen name="Signup" component={Signup} />
-        </Stack.Navigator>
-      </NavigationContainer>
-    );
-  }
+  const Tabs = TABS_BY_ROLE[user?.role] || IndividualTabs;
 
-  const Tabs = TABS_BY_ROLE[user.role] || IndividualTabs;
   return (
-    <NavigationContainer>
-      <Tabs />
+    <NavigationContainer linking={linking}>
+      <Stack.Navigator screenOptions={{ headerShown: false }}>
+        {user ? (
+          <Stack.Screen name="Tabs" component={Tabs} />
+        ) : (
+          <>
+            <Stack.Screen name="Welcome" component={Welcome} />
+            <Stack.Screen name="Login" component={Login} />
+            <Stack.Screen name="Signup" component={Signup} />
+          </>
+        )}
+        <Stack.Screen name="JoinDeal" component={JoinDeal} />
+      </Stack.Navigator>
     </NavigationContainer>
   );
 }

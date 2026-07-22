@@ -20,6 +20,8 @@ const OVERRIDABLE_FIELDS = [
   'doc002_signed',
   'doc003_signed',
   'funds_confirmed',
+  'loan_cleared',
+  'fines_cleared',
 ];
 
 // Human-readable descriptions of every field the deal-flow state machine
@@ -38,6 +40,8 @@ const FIELD_LABELS = {
   doc001_signed: 'DOC-001 (Transaction & Escrow Agreement) not signed by all parties',
   doc002_signed: 'DOC-002 (Limited Power of Attorney) not signed',
   funds_confirmed: 'Escrow funds not yet confirmed received from buyer',
+  loan_cleared: "Seller's outstanding bank loan not yet confirmed paid off by TrustIn",
+  fines_cleared: 'Outstanding RTA traffic fines not yet confirmed paid by TrustIn',
   transfer_cert_url: 'Tasjeel transfer certificate not yet uploaded',
 };
 
