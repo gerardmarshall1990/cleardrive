@@ -167,8 +167,8 @@ async function manualOverride(req, res) {
     payload: { updates, adminId: req.appUser?.id },
   });
 
-  const afterSignCheck = await dealFlowEngine.checkAndAdvanceIfAllSigned(updated.id);
-  return res.json({ deal: afterSignCheck || updated });
+  const afterCheck = await dealFlowEngine.checkAndAdvanceIfStageComplete(updated.id);
+  return res.json({ deal: afterCheck || updated });
 }
 
 module.exports = { getAllDeals, getStats, getDealDetail, manualOverride };

@@ -6,7 +6,7 @@
 // moment a deal enters a new stage.
 
 const { supabaseAdmin } = require('../config/supabase');
-const { STAGES, isValidTransition } = require('../utils/dealStages');
+const { STAGES, STAGE_ORDER, isValidTransition } = require('../utils/dealStages');
 const whatsApp = require('./whatsAppService');
 const trustIn = require('./trustInService');
 const signNow = require('./signNowService');
@@ -250,11 +250,39 @@ async function checkAndAdvanceIfAllSigned(dealId) {
   return deal;
 }
 
+/**
+ * Generalizes checkAndAdvanceIfAllSigned to every stage: if the deal's current
+ * stage now satisfies REQUIRED_FIELDS_TO_LEAVE (e.g. after an admin manual
+ * override flips fines_verified / seller_kyc_complete / buyer_kyc_complete /
+ * funds_confirmed, or sets transfer_cert_url), auto-advances it to the next
+ * stage in STAGE_ORDER. Shared by the admin manual-override endpoint so
+ * unblocking a flag also unblocks the deal itself, not just the underlying
+ * field — previously only the SIGNING stage got this treatment, so overriding
+ * e.g. fines_verified left the deal stuck on the same screen.
+ */
+async function checkAndAdvanceIfStageComplete(dealId) {
+  const { data: deal } = await supabaseAdmin.from('deals').select('*').eq('id', dealId).single();
+  if (!deal) return deal;
+
+  if (deal.status === STAGES.SIGNING) {
+    return checkAndAdvanceIfAllSigned(dealId);
+  }
+
+  const nextStage = STAGE_ORDER[STAGE_ORDER.indexOf(deal.status) + 1];
+  if (!nextStage) return deal;
+
+  const missing = validateRequiredFields(deal, deal.status);
+  if (missing.length > 0) return deal;
+
+  return advanceStage(dealId, nextStage);
+}
+
 module.exports = {
   advanceStage,
   onEnterStage,
   validateRequiredFields,
   getDealWithParties,
   checkAndAdvanceIfAllSigned,
+  checkAndAdvanceIfStageComplete,
   REQUIRED_FIELDS_TO_LEAVE,
 };
