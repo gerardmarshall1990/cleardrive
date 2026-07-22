@@ -1,0 +1,35 @@
+{
+  "cli": {
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://sokwuttflfigmrhyaccr.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNva3d1dHRmbGZpZ21yaHlhY2NyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ1MjQ1MDEsImV4cCI6MjEwMDEwMDUwMX0.FqbY8zQXq75ruqcfPbsuYNHBZ88LJDT3zPjVwgDWNTE",
+        "EXPO_PUBLIC_API_BASE_URL": "https://cleardrive-backend.onrender.com"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://sokwuttflfigmrhyaccr.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNva3d1dHRmbGZpZ21yaHlhY2NyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ1MjQ1MDEsImV4cCI6MjEwMDEwMDUwMX0.FqbY8zQXq75ruqcfPbsuYNHBZ88LJDT3zPjVwgDWNTE",
+        "EXPO_PUBLIC_API_BASE_URL": "https://cleardrive-backend.onrender.com"
+      }
+    },
+    "production": {
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://sokwuttflfigmrhyaccr.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNva3d1dHRmbGZpZ21yaHlhY2NyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ1MjQ1MDEsImV4cCI6MjEwMDEwMDUwMX0.FqbY8zQXq75ruqcfPbsuYNHBZ88LJDT3zPjVwgDWNTE",
+        "EXPO_PUBLIC_API_BASE_URL": "https://cleardrive-backend.onrender.com"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}
