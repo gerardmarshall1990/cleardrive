@@ -26,8 +26,27 @@ if (missingEnv.length > 0) {
 
 const app = express();
 
+// Restrict cross-origin requests to the real frontend(s). Native mobile HTTP
+// clients aren't browsers and don't send an Origin header, so this has no
+// effect on the mobile app — it only stops arbitrary websites from calling
+// this API directly from a browser. Add more comma-separated origins to
+// ALLOWED_ORIGINS in .env (e.g. a custom domain) without a code change.
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || process.env.APP_BASE_URL || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
 app.use(helmet());
-app.use(cors());
+app.use(
+  cors({
+    origin(origin, callback) {
+      // Allow no-Origin requests (curl, mobile apps, server-to-server) and
+      // any explicitly allow-listed browser origin.
+      if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+      return callback(new Error(`Origin ${origin} not allowed by CORS`));
+    },
+  })
+);
 app.use(morgan('dev'));
 // verify captures the raw request bytes onto req.rawBody — needed so webhook
 // signature verification (middleware/webhookSignature.js) can HMAC the exact
