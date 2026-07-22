@@ -6,6 +6,7 @@ const TABS_BY_ROLE = {
   individual: [
     { to: '/deals', label: 'My Deals', icon: '🚗' },
     { to: '/deals/new', label: 'New Deal', icon: '➕' },
+    { to: '/deals/join', label: 'Join Deal', icon: '🔗' },
   ],
   dealer: [
     { to: '/partner', label: 'My Referrals', icon: '📋' },

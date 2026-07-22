@@ -8,6 +8,7 @@ import Signup from './pages/Signup';
 import JoinDeal from './pages/JoinDeal';
 import MyDeals from './pages/MyDeals';
 import NewDeal from './pages/NewDeal';
+import JoinExistingDeal from './pages/JoinExistingDeal';
 import DealDetail from './pages/DealDetail';
 import AdminDashboard from './pages/admin/Dashboard';
 import AdminDealDetail from './pages/admin/DealDetail';
@@ -41,6 +42,16 @@ function App() {
               <ProtectedRoute roles={['individual']}>
                 <AppShell>
                   <NewDeal />
+                </AppShell>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/deals/join"
+            element={
+              <ProtectedRoute roles={['individual']}>
+                <AppShell>
+                  <JoinExistingDeal />
                 </AppShell>
               </ProtectedRoute>
             }

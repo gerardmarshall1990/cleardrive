@@ -4,6 +4,7 @@ import { stackScreenOptions, tabScreenOptions, tabIcon, LogoutButton } from './n
 
 import MyDeals from '../screens/MyDeals';
 import NewDeal from '../screens/NewDeal';
+import JoinExistingDeal from '../screens/JoinExistingDeal';
 import DealDetail from '../screens/DealDetail';
 
 const Tab = createBottomTabNavigator();
@@ -26,6 +27,14 @@ function NewDealStack() {
   );
 }
 
+function JoinDealStack() {
+  return (
+    <Stack.Navigator screenOptions={stackScreenOptions}>
+      <Stack.Screen name="JoinDealScreen" component={JoinExistingDeal} options={{ title: 'Join Deal' }} />
+    </Stack.Navigator>
+  );
+}
+
 // Single tab set for every individual account, whichever side they're
 // playing on a given deal — mirrors the web unified /deals routes.
 export function IndividualTabs() {
@@ -33,6 +42,7 @@ export function IndividualTabs() {
     <Tab.Navigator screenOptions={tabScreenOptions}>
       <Tab.Screen name="MyDeals" component={MyDealsStack} options={{ tabBarLabel: 'My Deals', tabBarIcon: tabIcon('🚗') }} />
       <Tab.Screen name="NewDeal" component={NewDealStack} options={{ tabBarLabel: 'New Deal', tabBarIcon: tabIcon('➕') }} />
+      <Tab.Screen name="JoinDeal" component={JoinDealStack} options={{ tabBarLabel: 'Join Deal', tabBarIcon: tabIcon('🔗') }} />
     </Tab.Navigator>
   );
 }

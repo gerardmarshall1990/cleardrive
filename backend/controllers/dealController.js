@@ -202,6 +202,38 @@ async function createDeal(req, res) {
 }
 
 /**
+ * GET /api/deals/by-ref/:ref — looks up a deal by its human-readable
+ * reference (e.g. "CD-2026-035") for the "Join Deal" flow: the other party
+ * enters the ref number themselves instead of needing the emailed/WhatsApp'd
+ * join link to actually arrive. Returns only a small preview (not the full
+ * deal record — no banking/escrow fields) plus which side is still open, so
+ * the frontend can show "Confirm you're the {openRole}" before attaching.
+ */
+async function getDealByRef(req, res) {
+  if (req.appUser.role !== 'individual') {
+    return res.status(403).json({ error: 'Only individual accounts can join a deal this way' });
+  }
+
+  const { data: deal, error } = await supabaseAdmin.from('deals').select('*').eq('ref', req.params.ref).maybeSingle();
+  if (error || !deal) return res.status(404).json({ error: 'No deal found with that reference number' });
+
+  const openRole = !deal.seller_id ? 'seller' : !deal.buyer_id ? 'buyer' : null;
+
+  return res.json({
+    deal: {
+      id: deal.id,
+      ref: deal.ref,
+      product: deal.product,
+      plate: deal.plate,
+      sale_price: deal.sale_price,
+      status: deal.status,
+    },
+    openRole,
+    alreadyJoined: deal.seller_id === req.appUser.id || deal.buyer_id === req.appUser.id,
+  });
+}
+
+/**
  * POST /api/deals/:id/join — the join-link landing action. Clicking an
  * invite link (either directly, if already logged in as the right role, or
  * immediately after completing signup) calls this to attach the caller to
@@ -531,6 +563,7 @@ async function updateDetails(req, res) {
 module.exports = {
   createDeal,
   joinDeal,
+  getDealByRef,
   attachBuyer,
   getDeal,
   listMine,

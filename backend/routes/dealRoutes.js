@@ -28,6 +28,8 @@ router.post(
 
 router.get('/mine', requireAuth, asyncHandler(dealController.listMine));
 
+router.get('/by-ref/:ref', requireAuth, asyncHandler(dealController.getDealByRef));
+
 router.post(
   '/:id/join',
   requireAuth,
