@@ -10,7 +10,7 @@ const documentVision = require('../services/documentVisionService');
 const docGen = require('../services/documentGenerator');
 const whatsAppService = require('../services/whatsAppService');
 const emailService = require('../services/emailService');
-const { STAGES } = require('../utils/dealStages');
+const { STAGES, stageIndex } = require('../utils/dealStages');
 const logger = require('../utils/logger');
 
 const SAFEPAY_MIN_SALE_PRICE = 100000;
@@ -569,6 +569,75 @@ async function updateDetails(req, res) {
   return res.json({ deal: updated });
 }
 
+const EDITABLE_ANYTIME_FIELDS = ['sale_price', 'mileage', 'emirate', 'seller_iban', 'seller_acc_name', 'seller_proc_bank'];
+
+/**
+ * PATCH /api/deals/:id/edit — lets the seller correct their own typed-in
+ * details (sale price, mileage, emirate, proceeds bank account) at any point
+ * before ESCROW, without reopening the whole stage flow. Deliberately excludes
+ * every field sourced from a scanned document (plate/VIN/make/model/year/colour
+ * from the Mulkiya, loan_amount/account/bank from the settlement letter) — those
+ * are locked in once confirmed at the Details stage, so the official record
+ * can't quietly be altered after the fact. A genuine misread there should be
+ * fixed by re-uploading the document at that stage, not through this endpoint.
+ *
+ * If sale price/mileage/emirate change after DOC-001 was already generated
+ * (deal currently in SIGNING), the document is regenerated and its signed
+ * status reset, since DOC-001 prints those fields.
+ */
+async function editDealDetails(req, res) {
+  const { data: deal, error } = await supabaseAdmin.from('deals').select('*').eq('id', req.params.id).single();
+  if (error || !deal) return res.status(404).json({ error: 'Deal not found' });
+
+  if (deal.seller_id !== req.appUser.id) {
+    return res.status(403).json({ error: 'Only the seller can edit these details' });
+  }
+
+  if (stageIndex(deal.status) >= stageIndex(STAGES.ESCROW)) {
+    return res.status(400).json({ error: 'This deal has moved into escrow — details can no longer be edited here' });
+  }
+
+  const updates = {};
+  for (const field of EDITABLE_ANYTIME_FIELDS) {
+    if (req.body[field] !== undefined) updates[field] = req.body[field];
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: `No valid fields provided. Allowed: ${EDITABLE_ANYTIME_FIELDS.join(', ')}` });
+  }
+
+  if (updates.sale_price !== undefined) {
+    const salePrice = Number(updates.sale_price);
+    const loanAmount = deal.loan_amount || 0;
+    const finesAmount = deal.fines_amount || 0;
+    const cdFee = deal.product === 'loanclear' ? feeCalculator.calculateLoanClearFee(loanAmount) : feeCalculator.calculateSafePayFee(salePrice);
+    updates.cd_fee = cdFee;
+    updates.net_proceeds = feeCalculator.calculateNetProceeds({ salePrice, loanAmount, finesAmount, cdFee });
+  }
+
+  // DOC-001 prints sale price / mileage / emirate — if it's already been
+  // generated (deal at SIGNING) and one of those changed, it's now stale:
+  // regenerate it and require both parties to sign again.
+  const docPrintedFieldsChanged = ['sale_price', 'mileage', 'emirate'].some((f) => updates[f] !== undefined);
+  const doc001AlreadyGenerated = deal.status === STAGES.SIGNING && deal.doc001_url;
+
+  if (docPrintedFieldsChanged && doc001AlreadyGenerated) {
+    const dealForDoc = { ...deal, ...updates };
+    const [{ data: seller }, { data: buyer }] = await Promise.all([
+      supabaseAdmin.from('users').select('*').eq('id', deal.seller_id).single(),
+      deal.buyer_id ? supabaseAdmin.from('users').select('*').eq('id', deal.buyer_id).single() : { data: null },
+    ]);
+    updates.doc001_url = await docGen.generateDoc001(dealForDoc, seller, buyer);
+    updates.doc001_signed = false;
+    updates.doc001_signnow_id = null;
+  }
+
+  const { data: updated, error: updateErr } = await supabaseAdmin.from('deals').update(updates).eq('id', deal.id).select().single();
+  if (updateErr) return res.status(500).json({ error: 'Could not save changes — please try again' });
+
+  return res.json({ deal: updated });
+}
+
 module.exports = {
   createDeal,
   joinDeal,
@@ -586,4 +655,5 @@ module.exports = {
   getDocs,
   completeDeal,
   updateDetails,
+  editDealDetails,
 };

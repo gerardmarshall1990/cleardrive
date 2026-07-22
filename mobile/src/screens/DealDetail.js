@@ -76,6 +76,10 @@ export default function DealDetail({ route }) {
 
       <ProgressSteps currentStage={deal.status} accent={accent} />
 
+      {myRole === 'seller' && stageIndex(deal.status) < stageIndex(STAGES.ESCROW) && (
+        <EditDealDetails deal={deal} onUpdate={setDeal} onError={setError} />
+      )}
+
       <ErrorBanner message={error} />
 
       {myRole === 'seller' ? (
@@ -88,6 +92,83 @@ export default function DealDetail({ route }) {
         <Timeline currentStage={deal.status} />
       </View>
     </ScrollView>
+  );
+}
+
+// Lets the seller fix a mistake in their own typed-in details (sale price,
+// mileage, emirate, proceeds bank account) at any point before escrow, without
+// reopening the whole stage flow. Deliberately excludes anything sourced from
+// a scanned document (plate/VIN/make/model/year/colour from the Mulkiya,
+// loan details from the settlement letter) — those are locked in once
+// confirmed at the Details stage; a misread there gets fixed by re-uploading
+// the document at that stage, not here.
+function EditDealDetails({ deal, onUpdate, onError }) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({
+    sale_price: deal.sale_price ? String(deal.sale_price) : '',
+    mileage: deal.mileage ? String(deal.mileage) : '',
+    emirate: deal.emirate || EMIRATES[0],
+    seller_iban: deal.seller_iban || '',
+    seller_acc_name: deal.seller_acc_name || '',
+    seller_proc_bank: deal.seller_proc_bank || '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  function set(field, value) {
+    setForm((f) => ({ ...f, [field]: value }));
+  }
+
+  async function handleSubmit() {
+    setSaving(true);
+    onError('');
+    setMsg('');
+    try {
+      const { deal: updated } = await api.patch(`/api/deals/${deal.id}/edit`, form);
+      onUpdate(updated);
+      setMsg('Saved.');
+      setOpen(false);
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <Pressable onPress={() => setOpen(true)}>
+        <Text style={styles.editLink}>Edit deal details</Text>
+      </Pressable>
+    );
+  }
+
+  return (
+    <DarkCard style={{ marginTop: 12 }}>
+      <Text style={styles.editTitle}>Edit deal details</Text>
+      <View style={{ gap: 10 }}>
+        <Input label="Sale price (AED)" keyboardType="numeric" value={form.sale_price} onChangeText={(v) => set('sale_price', v)} />
+        <Input label="Mileage (km)" value={form.mileage} onChangeText={(v) => set('mileage', v)} />
+        <Select label="Emirate" selectedValue={form.emirate} onValueChange={(v) => set('emirate', v)}>
+          {EMIRATES.map((em) => (
+            <Select.Item key={em} label={em} value={em} />
+          ))}
+        </Select>
+        <Text style={styles.sectionLabel}>Your proceeds account</Text>
+        <Input label="IBAN" value={form.seller_iban} onChangeText={(v) => set('seller_iban', v)} />
+        <Input label="Account holder name" value={form.seller_acc_name} onChangeText={(v) => set('seller_acc_name', v)} />
+        <Input label="Bank" value={form.seller_proc_bank} onChangeText={(v) => set('seller_proc_bank', v)} />
+        {msg ? <Text style={styles.savedMsg}>{msg}</Text> : null}
+        <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+          <Button loading={saving} onPress={handleSubmit} style={{ flex: 1 }}>
+            Save changes
+          </Button>
+          <Button variant="secondary" onPress={() => setOpen(false)} style={{ flex: 1 }}>
+            Cancel
+          </Button>
+        </View>
+      </View>
+    </DarkCard>
   );
 }
 
@@ -504,6 +585,9 @@ const styles = StyleSheet.create({
   headRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   ref: { fontFamily: fonts.display, fontSize: 20, fontWeight: 'bold', color: colors.white },
   plate: { fontFamily: fonts.sans, fontSize: 13, color: colors.white40, marginBottom: 8 },
+  editLink: { fontFamily: fonts.sansSemiBold, fontSize: 13, color: colors.gold, marginTop: 10 },
+  editTitle: { fontFamily: fonts.display, fontSize: 16, color: colors.white, marginBottom: 10 },
+  savedMsg: { fontFamily: fonts.sans, fontSize: 12, color: colors.green },
   cardTitle: { fontFamily: fonts.display, fontSize: 17, color: colors.white },
   cardBody: { fontFamily: fonts.sans, fontSize: 13, color: colors.white50, marginTop: 4 },
   instructions: { marginTop: 12, borderRadius: 10, backgroundColor: colors.white4, borderWidth: 1, borderColor: colors.white8, padding: 12, gap: 4 },

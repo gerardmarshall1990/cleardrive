@@ -93,6 +93,21 @@ router.patch(
 
 router.patch('/:id/details', requireAuth, asyncHandler(dealController.updateDetails));
 
+router.patch(
+  '/:id/edit',
+  requireAuth,
+  [
+    body('sale_price').optional().isFloat({ gt: 0 }),
+    body('mileage').optional().isString(),
+    body('emirate').optional().isString(),
+    body('seller_iban').optional().isString(),
+    body('seller_acc_name').optional().isString(),
+    body('seller_proc_bank').optional().isString(),
+  ],
+  validate,
+  asyncHandler(dealController.editDealDetails)
+);
+
 router.patch('/:id/buyer', requireAuth, [body('buyerPhone').isString().notEmpty()], validate, asyncHandler(dealController.attachBuyer));
 
 router.post('/:id/generate-docs', requireAuth, asyncHandler(dealController.generateDocs));

@@ -78,6 +78,10 @@ export default function DealDetail() {
 
       <ProgressSteps currentStage={deal.status} accent={accent} />
 
+      {myRole === 'seller' && stageIndex(deal.status) < stageIndex(STAGES.ESCROW) && (
+        <EditDealDetails deal={deal} onUpdate={setDeal} onError={setError} />
+      )}
+
       <div className="mt-6">
         <ErrorBanner message={error} />
         {myRole === 'seller' ? (
@@ -91,6 +95,97 @@ export default function DealDetail() {
         <Timeline currentStage={deal.status} />
       </div>
     </div>
+  );
+}
+
+// Lets the seller fix a mistake in their own typed-in details (sale price,
+// mileage, emirate, proceeds bank account) at any point before escrow, without
+// reopening the whole stage flow. Deliberately excludes anything sourced from
+// a scanned document (plate/VIN/make/model/year/colour from the Mulkiya,
+// loan details from the settlement letter) — those are locked in once
+// confirmed at the Details stage; a misread there gets fixed by re-uploading
+// the document at that stage, not here.
+function EditDealDetails({ deal, onUpdate, onError }) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({
+    sale_price: deal.sale_price || '',
+    mileage: deal.mileage || '',
+    emirate: deal.emirate || EMIRATES[0],
+    seller_iban: deal.seller_iban || '',
+    seller_acc_name: deal.seller_acc_name || '',
+    seller_proc_bank: deal.seller_proc_bank || '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  function set(field) {
+    return (e) => setForm((f) => ({ ...f, [field]: e.target.value }));
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setSaving(true);
+    onError('');
+    setMsg('');
+    try {
+      const { deal: updated } = await api.patch(`/api/deals/${deal.id}/edit`, form);
+      onUpdate(updated);
+      setMsg('Saved.');
+      setOpen(false);
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="mt-3 text-xs font-semibold text-gold hover:underline"
+      >
+        Edit deal details
+      </button>
+    );
+  }
+
+  return (
+    <DarkCard className="mt-3">
+      <h4 className="font-display text-base font-semibold text-white mb-3">Edit deal details</h4>
+      <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+        <Input label="Sale price (AED)" type="number" min="0" value={form.sale_price} onChange={set('sale_price')} />
+        <Input label="Mileage (km)" value={form.mileage} onChange={set('mileage')} />
+        <label className="flex flex-col gap-2">
+          <span className="text-[11px] font-bold tracking-[1.5px] uppercase text-white/50 font-sans">Emirate</span>
+          <select
+            className="w-full rounded-lg border-[1.5px] border-white/12 bg-white/5 px-4 py-3.5 text-[15px] text-white font-sans outline-none focus:border-gold"
+            value={form.emirate}
+            onChange={set('emirate')}
+          >
+            {EMIRATES.map((em) => (
+              <option key={em} value={em} className="bg-navy">
+                {em}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="text-xs uppercase tracking-wide text-white/40 font-sans font-bold mt-2">Your proceeds account</p>
+        <Input label="IBAN" value={form.seller_iban} onChange={set('seller_iban')} />
+        <Input label="Account holder name" value={form.seller_acc_name} onChange={set('seller_acc_name')} />
+        <Input label="Bank" value={form.seller_proc_bank} onChange={set('seller_proc_bank')} />
+        {msg && <p className="text-xs text-green">{msg}</p>}
+        <div className="flex gap-2 mt-1">
+          <Button type="submit" loading={saving} className="flex-1">
+            Save changes
+          </Button>
+          <Button type="button" variant="secondary" onClick={() => setOpen(false)} className="flex-1">
+            Cancel
+          </Button>
+        </div>
+      </form>
+    </DarkCard>
   );
 }
 
