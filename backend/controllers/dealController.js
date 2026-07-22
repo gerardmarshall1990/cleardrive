@@ -304,7 +304,7 @@ async function verifyFines(req, res) {
   const result = await finesVerification.verifyFinesScreenshot({ imageBase64, mediaType, expectedPlate: deal.plate });
 
   if (!result.success) {
-    return res.status(422).json({ verified: false, reason: result.reason });
+    return res.status(422).json({ verified: false, error: result.reason, reason: result.reason });
   }
 
   const cdFee = deal.product === 'loanclear' ? feeCalculator.calculateLoanClearFee(deal.loan_amount) : feeCalculator.calculateSafePayFee(deal.sale_price);
