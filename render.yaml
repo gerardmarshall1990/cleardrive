@@ -55,7 +55,7 @@ services:
       - key: EMAIL_FROM
         sync: false
       - key: EMAIL_MOCK_MODE
-        value: "true"
+        sync: false # set to "false" in the Render dashboard once RESEND_API_KEY/EMAIL_FROM are real — using sync:false so blueprint deploys never silently reset it back to mock
       - key: SENTRY_DSN
         sync: false # optional - set once you sign up at sentry.io and create a Node project
       - key: JWT_SECRET
