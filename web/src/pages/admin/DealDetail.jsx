@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { DarkCard } from '../../components/Card';
 import { Button } from '../../components/Button';
-import { Input } from '../../components/Input';
+import { Input, Select } from '../../components/Input';
 import { Badge, ProductBadge } from '../../components/Badge';
 import { ErrorBanner, SuccessBanner } from '../../components/Alert';
 import { ProgressSteps } from '../../components/ProgressSteps';
@@ -21,6 +21,30 @@ function vehicleTitle(deal) {
 // signing / Claude Vision fines extraction aren't yet live integrations (or
 // are currently failing), or when a verification/signature/payment was
 // collected outside the platform.
+const EMIRATES = ['Dubai', 'Abu Dhabi', 'Sharjah', 'Ajman', 'Ras Al Khaimah', 'Fujairah', 'Umm Al Quwain'];
+
+// Vehicle/financial fields admin can manually correct — mirrors backend's
+// ADMIN_DETAIL_FIELDS in adminController.js. Exists as a safety net for when
+// Claude Vision misreads the Mulkiya or bank settlement letter photo — admin
+// can pull up the source photo below (mulkiya_image_url/settlement_image_url)
+// and type the correct value in here instead of what was auto-extracted.
+const DETAIL_FIELDS = [
+  { key: 'plate', label: 'Plate number' },
+  { key: 'vin', label: 'VIN' },
+  { key: 'make', label: 'Make' },
+  { key: 'model', label: 'Model' },
+  { key: 'year', label: 'Year', type: 'number' },
+  { key: 'colour', label: 'Colour' },
+  { key: 'mileage', label: 'Mileage (km)', type: 'number' },
+  { key: 'sale_price', label: 'Sale price (AED)', type: 'number' },
+  { key: 'loan_amount', label: 'Loan/settlement amount (AED)', type: 'number', loanOnly: true },
+  { key: 'loan_account', label: 'Loan reference number', loanOnly: true },
+  { key: 'loan_bank', label: 'Loan bank', loanOnly: true },
+  { key: 'seller_iban', label: 'Seller payout IBAN' },
+  { key: 'seller_acc_name', label: 'Seller payout account name' },
+  { key: 'seller_proc_bank', label: 'Seller payout bank' },
+];
+
 const OVERRIDE_FIELDS = [
   { key: 'fines_verified', label: 'Traffic fines verified' },
   { key: 'seller_kyc_complete', label: 'Seller KYC complete' },
@@ -39,6 +63,7 @@ export default function AdminDealDetail() {
   const [saving, setSaving] = useState(false);
   const [finesAmount, setFinesAmount] = useState('');
   const [transferCertUrl, setTransferCertUrl] = useState('');
+  const [detailsForm, setDetailsForm] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -52,6 +77,51 @@ export default function AdminDealDetail() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Populate the manual-correction form once when the deal first loads (or
+  // after a save resets it to null) — never overwrite while admin is mid-edit.
+  useEffect(() => {
+    if (deal && !detailsForm) {
+      setDetailsForm({
+        plate: deal.plate || '',
+        vin: deal.vin || '',
+        make: deal.make || '',
+        model: deal.model || '',
+        year: deal.year || '',
+        colour: deal.colour || '',
+        emirate: deal.emirate || EMIRATES[0],
+        mileage: deal.mileage || '',
+        sale_price: deal.sale_price || '',
+        loan_amount: deal.loan_amount || '',
+        loan_account: deal.loan_account || '',
+        loan_bank: deal.loan_bank || '',
+        seller_iban: deal.seller_iban || '',
+        seller_acc_name: deal.seller_acc_name || '',
+        seller_proc_bank: deal.seller_proc_bank || '',
+      });
+    }
+  }, [deal, detailsForm]);
+
+  function setDetailField(field, value) {
+    setDetailsForm((f) => ({ ...f, [field]: value }));
+  }
+
+  async function submitDetailsForm(e) {
+    e.preventDefault();
+    setSaving(true);
+    setError('');
+    setSuccess('');
+    try {
+      const { deal: updated } = await api.put(`/api/admin/deals/${id}/override`, detailsForm);
+      setDeal(updated);
+      setDetailsForm(null);
+      setSuccess('Vehicle & financial details updated');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function toggleField(field) {
     setSaving(true);
@@ -163,6 +233,58 @@ export default function AdminDealDetail() {
           <Row label="Funds confirmed" value={deal.funds_confirmed ? 'Yes' : 'No'} />
         </DarkCard>
       </div>
+
+      {(deal.mulkiya_image_url || deal.settlement_image_url) && (
+        <DarkCard className="mt-4">
+          <h4 className="font-display text-base font-semibold text-white mb-1">Uploaded attachments</h4>
+          <p className="text-sm text-white/50 mb-3">Check the original photo if the fields below look wrong — Claude Vision extraction isn't perfect.</p>
+          <div className="flex flex-col gap-2">
+            {deal.mulkiya_image_url && (
+              <a href={deal.mulkiya_image_url} target="_blank" rel="noreferrer" className="text-sm text-gold underline">
+                View uploaded Mulkiya (vehicle registration card)
+              </a>
+            )}
+            {deal.settlement_image_url && (
+              <a href={deal.settlement_image_url} target="_blank" rel="noreferrer" className="text-sm text-gold underline">
+                View uploaded bank settlement letter
+              </a>
+            )}
+          </div>
+        </DarkCard>
+      )}
+
+      <DarkCard className="mt-4">
+        <h4 className="font-display text-base font-semibold text-white mb-1">Vehicle & financial details — manual correction</h4>
+        <p className="text-sm text-white/50 mb-4">
+          Use this if Claude Vision misread the Mulkiya or settlement letter — check the attachment above, then correct the field(s) here. Saving
+          re-checks whether the deal can now advance.
+        </p>
+        {detailsForm && (
+          <form onSubmit={submitDetailsForm} className="grid gap-3 sm:grid-cols-2">
+            {DETAIL_FIELDS.filter((f) => !f.loanOnly || deal.product === 'loanclear').map((f) => (
+              <Input
+                key={f.key}
+                label={f.label}
+                type={f.type || 'text'}
+                value={detailsForm[f.key]}
+                onChange={(e) => setDetailField(f.key, e.target.value)}
+              />
+            ))}
+            <Select label="Emirate" value={detailsForm.emirate} onChange={(e) => setDetailField('emirate', e.target.value)}>
+              {EMIRATES.map((em) => (
+                <option key={em} value={em}>
+                  {em}
+                </option>
+              ))}
+            </Select>
+            <div className="sm:col-span-2">
+              <Button type="submit" variant={accent} loading={saving} className="!px-4 !py-2 !text-sm">
+                Save corrections
+              </Button>
+            </div>
+          </form>
+        )}
+      </DarkCard>
 
       <DarkCard className="mt-4">
         <h4 className="font-display text-base font-semibold text-white mb-1">Manual overrides</h4>

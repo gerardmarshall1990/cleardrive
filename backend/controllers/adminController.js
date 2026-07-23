@@ -24,6 +24,31 @@ const OVERRIDABLE_FIELDS = [
   'fines_cleared',
 ];
 
+// Vehicle/financial fields admin may manually correct — mirrors
+// dealController.js's DETAILS_ALLOWED_FIELDS (what the seller submits at the
+// Details stage). Exists as a safety net for when Claude Vision misreads the
+// Mulkiya or bank settlement letter: admin can pull up the source photo
+// (mulkiya_image_url/settlement_image_url, see 0007_deal_uploaded_images.sql)
+// and type in the correct value instead, then the usual auto-advance check
+// below moves the deal forward using the corrected data.
+const ADMIN_DETAIL_FIELDS = [
+  'vin',
+  'plate',
+  'make',
+  'model',
+  'year',
+  'colour',
+  'emirate',
+  'mileage',
+  'sale_price',
+  'loan_amount',
+  'loan_account',
+  'loan_bank',
+  'seller_iban',
+  'seller_acc_name',
+  'seller_proc_bank',
+];
+
 // Human-readable descriptions of every field the deal-flow state machine
 // requires to leave a stage — used to tell admin exactly *why* a deal is stuck,
 // not just that it is. Mirrors dealFlowEngine.REQUIRED_FIELDS_TO_LEAVE.
@@ -138,6 +163,9 @@ async function manualOverride(req, res) {
   for (const field of OVERRIDABLE_FIELDS) {
     if (req.body[field] !== undefined) updates[field] = Boolean(req.body[field]);
   }
+  for (const field of ADMIN_DETAIL_FIELDS) {
+    if (req.body[field] !== undefined) updates[field] = req.body[field];
+  }
 
   // Admin marking fines_verified=true can optionally supply the actual fines
   // figure (e.g. read off the RTA screenshot themselves) — recalculate fee/net
@@ -150,6 +178,18 @@ async function manualOverride(req, res) {
     updates.net_proceeds = feeCalculator.calculateNetProceeds({ salePrice: deal.sale_price, loanAmount: deal.loan_amount || 0, finesAmount, cdFee });
   }
 
+  // If admin corrects sale_price or loan_amount (e.g. Claude Vision misread
+  // the settlement letter), fee/net proceeds must be recalculated the same
+  // way the seller's own PATCH /:id/details does.
+  if (updates.sale_price !== undefined || updates.loan_amount !== undefined) {
+    const salePrice = updates.sale_price ?? deal.sale_price;
+    const loanAmount = updates.loan_amount !== undefined ? Number(updates.loan_amount) : deal.loan_amount || 0;
+    const finesAmount = updates.fines_amount ?? deal.fines_amount ?? 0;
+    const cdFee = deal.product === 'loanclear' ? feeCalculator.calculateLoanClearFee(loanAmount) : feeCalculator.calculateSafePayFee(salePrice);
+    updates.cd_fee = cdFee;
+    updates.net_proceeds = feeCalculator.calculateNetProceeds({ salePrice, loanAmount, finesAmount, cdFee });
+  }
+
   // Tasjeel stage requires transfer_cert_url (a string, not a boolean) — admin
   // can paste the certificate link/reference to unblock COMPLETE.
   if (typeof req.body.transferCertUrl === 'string' && req.body.transferCertUrl.trim()) {
@@ -157,7 +197,9 @@ async function manualOverride(req, res) {
   }
 
   if (Object.keys(updates).length === 0) {
-    return res.status(400).json({ error: `No valid fields provided. Allowed: ${OVERRIDABLE_FIELDS.join(', ')}, finesAmount, transferCertUrl` });
+    return res
+      .status(400)
+      .json({ error: `No valid fields provided. Allowed: ${OVERRIDABLE_FIELDS.join(', ')}, ${ADMIN_DETAIL_FIELDS.join(', ')}, finesAmount, transferCertUrl` });
   }
 
   const { data: updated, error } = await supabaseAdmin.from('deals').update(updates).eq('id', req.params.id).select().single();

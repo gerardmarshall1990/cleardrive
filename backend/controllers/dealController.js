@@ -8,6 +8,7 @@ const dealFlowEngine = require('../services/dealFlowEngine');
 const finesVerification = require('../services/finesVerificationService');
 const documentVision = require('../services/documentVisionService');
 const trustInKycService = require('../services/trustInKycService');
+const storageService = require('../services/storageService');
 const docGen = require('../services/documentGenerator');
 const whatsAppService = require('../services/whatsAppService');
 const emailService = require('../services/emailService');
@@ -439,7 +440,10 @@ async function verifyFines(req, res) {
  * POST /api/deals/:id/extract-mulkiya — accepts a base64 Mulkiya (vehicle
  * registration card) photo, runs Claude Vision extraction, and returns the
  * extracted vehicle fields for the seller to confirm/edit before saving via
- * PATCH /:id/details. Never writes to the DB directly.
+ * PATCH /:id/details. The raw photo itself IS persisted (mulkiya_image_url,
+ * see 0007_deal_uploaded_images.sql) — regardless of whether extraction
+ * succeeds — so admin can pull up the source document and correct any field
+ * Claude Vision misread via the admin override endpoint.
  */
 async function extractMulkiya(req, res) {
   const { imageBase64, mediaType } = req.body;
@@ -451,6 +455,14 @@ async function extractMulkiya(req, res) {
   if (error || !deal) return res.status(404).json({ error: 'Deal not found' });
   if (deal.seller_id !== req.appUser.id) {
     return res.status(403).json({ error: 'Only the seller can upload the Mulkiya' });
+  }
+
+  try {
+    const ext = mediaType === 'image/png' ? 'png' : 'jpg';
+    const imageUrl = await storageService.uploadUserImage(imageBase64, mediaType, `${deal.id}/mulkiya-${Date.now()}.${ext}`);
+    await supabaseAdmin.from('deals').update({ mulkiya_image_url: imageUrl }).eq('id', deal.id);
+  } catch (uploadErr) {
+    logger.warn('Mulkiya image upload failed — continuing with extraction only', { error: uploadErr.message, dealId: deal.id });
   }
 
   const result = await documentVision.extractMulkiya({ imageBase64, mediaType });
@@ -479,6 +491,14 @@ async function extractSettlement(req, res) {
     return res.status(403).json({ error: 'Only the seller can upload the settlement letter' });
   }
   if (deal.product !== 'loanclear') return res.status(400).json({ error: 'Settlement letter extraction only applies to LoanClear deals' });
+
+  try {
+    const ext = mediaType === 'image/png' ? 'png' : 'jpg';
+    const imageUrl = await storageService.uploadUserImage(imageBase64, mediaType, `${deal.id}/settlement-${Date.now()}.${ext}`);
+    await supabaseAdmin.from('deals').update({ settlement_image_url: imageUrl }).eq('id', deal.id);
+  } catch (uploadErr) {
+    logger.warn('Settlement image upload failed — continuing with extraction only', { error: uploadErr.message, dealId: deal.id });
+  }
 
   const result = await documentVision.extractSettlementLetter({ imageBase64, mediaType });
   if (!result.success) return res.status(422).json({ extracted: false, error: result.reason, reason: result.reason });

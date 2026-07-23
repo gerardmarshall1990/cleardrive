@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Linking } from 'react-native';
 import { DarkCard } from '../../components/Card';
 import { Button } from '../../components/Button';
-import { Input } from '../../components/Input';
+import { Input, Select } from '../../components/Input';
 import { Badge, ProductBadge } from '../../components/Badge';
 import { ErrorBanner, SuccessBanner } from '../../components/Alert';
 import { ProgressSteps } from '../../components/ProgressSteps';
@@ -32,6 +32,30 @@ const OVERRIDE_FIELDS = [
   { key: 'funds_confirmed', label: 'Escrow funds confirmed received' },
 ];
 
+const EMIRATES = ['Dubai', 'Abu Dhabi', 'Sharjah', 'Ajman', 'Ras Al Khaimah', 'Fujairah', 'Umm Al Quwain'];
+
+// Vehicle/financial fields admin can manually correct — mirrors backend's
+// ADMIN_DETAIL_FIELDS in adminController.js. Safety net for when Claude
+// Vision misreads the Mulkiya or bank settlement letter photo — admin checks
+// the source photo (mulkiya_image_url/settlement_image_url) and types the
+// correct value here instead of what was auto-extracted.
+const DETAIL_FIELDS = [
+  { key: 'plate', label: 'Plate number' },
+  { key: 'vin', label: 'VIN' },
+  { key: 'make', label: 'Make' },
+  { key: 'model', label: 'Model' },
+  { key: 'year', label: 'Year', numeric: true },
+  { key: 'colour', label: 'Colour' },
+  { key: 'mileage', label: 'Mileage (km)', numeric: true },
+  { key: 'sale_price', label: 'Sale price (AED)', numeric: true },
+  { key: 'loan_amount', label: 'Loan/settlement amount (AED)', numeric: true, loanOnly: true },
+  { key: 'loan_account', label: 'Loan reference number', loanOnly: true },
+  { key: 'loan_bank', label: 'Loan bank', loanOnly: true },
+  { key: 'seller_iban', label: 'Seller payout IBAN' },
+  { key: 'seller_acc_name', label: 'Seller payout account name' },
+  { key: 'seller_proc_bank', label: 'Seller payout bank' },
+];
+
 export default function AdminDealDetail({ route }) {
   const { id } = route.params;
   const [deal, setDeal] = useState(null);
@@ -40,6 +64,7 @@ export default function AdminDealDetail({ route }) {
   const [saving, setSaving] = useState(false);
   const [finesAmount, setFinesAmount] = useState('');
   const [transferCertUrl, setTransferCertUrl] = useState('');
+  const [detailsForm, setDetailsForm] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -53,6 +78,50 @@ export default function AdminDealDetail({ route }) {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Populate the manual-correction form once when the deal first loads (or
+  // after a save resets it to null) — never overwrite while admin is mid-edit.
+  useEffect(() => {
+    if (deal && !detailsForm) {
+      setDetailsForm({
+        plate: deal.plate || '',
+        vin: deal.vin || '',
+        make: deal.make || '',
+        model: deal.model || '',
+        year: deal.year || '',
+        colour: deal.colour || '',
+        emirate: deal.emirate || EMIRATES[0],
+        mileage: deal.mileage || '',
+        sale_price: deal.sale_price || '',
+        loan_amount: deal.loan_amount || '',
+        loan_account: deal.loan_account || '',
+        loan_bank: deal.loan_bank || '',
+        seller_iban: deal.seller_iban || '',
+        seller_acc_name: deal.seller_acc_name || '',
+        seller_proc_bank: deal.seller_proc_bank || '',
+      });
+    }
+  }, [deal, detailsForm]);
+
+  function setDetailField(field, value) {
+    setDetailsForm((f) => ({ ...f, [field]: value }));
+  }
+
+  async function submitDetailsForm() {
+    setSaving(true);
+    setError('');
+    setSuccess('');
+    try {
+      const { deal: updated } = await api.put(`/api/admin/deals/${id}/override`, detailsForm);
+      setDeal(updated);
+      setDetailsForm(null);
+      setSuccess('Vehicle & financial details updated');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function toggleField(field) {
     setSaving(true);
@@ -158,6 +227,56 @@ export default function AdminDealDetail({ route }) {
         <Row label="Buyer ID" value={deal.buyer_id ? deal.buyer_id.slice(0, 8) : 'Not attached'} mono />
         <Row label="Escrow IBAN" value={deal.trustin_escrow_iban || '—'} mono />
         <Row label="Funds confirmed" value={deal.funds_confirmed ? 'Yes' : 'No'} />
+      </DarkCard>
+
+      {(deal.mulkiya_image_url || deal.settlement_image_url) && (
+        <DarkCard style={{ marginTop: 12 }}>
+          <Text style={styles.cardTitle}>Uploaded attachments</Text>
+          <Text style={[styles.cardBody, { marginBottom: 12 }]}>Check the original photo if the fields below look wrong — Claude Vision extraction isn't perfect.</Text>
+          <View style={{ gap: 8 }}>
+            {deal.mulkiya_image_url && (
+              <Text style={styles.linkText} onPress={() => Linking.openURL(deal.mulkiya_image_url)}>
+                View uploaded Mulkiya (vehicle registration card)
+              </Text>
+            )}
+            {deal.settlement_image_url && (
+              <Text style={styles.linkText} onPress={() => Linking.openURL(deal.settlement_image_url)}>
+                View uploaded bank settlement letter
+              </Text>
+            )}
+          </View>
+        </DarkCard>
+      )}
+
+      <DarkCard style={{ marginTop: 12 }}>
+        <Text style={styles.cardTitle}>Vehicle & financial details — manual correction</Text>
+        <Text style={[styles.cardBody, { marginBottom: 12 }]}>
+          Use this if Claude Vision misread the Mulkiya or settlement letter — check the attachment above, then correct the field(s) here. Saving
+          re-checks whether the deal can now advance.
+        </Text>
+        <ErrorBanner message={error} />
+        <SuccessBanner message={success} />
+        {detailsForm && (
+          <View style={{ gap: 12 }}>
+            {DETAIL_FIELDS.filter((f) => !f.loanOnly || deal.product === 'loanclear').map((f) => (
+              <Input
+                key={f.key}
+                label={f.label}
+                keyboardType={f.numeric ? 'numeric' : 'default'}
+                value={String(detailsForm[f.key])}
+                onChangeText={(v) => setDetailField(f.key, v)}
+              />
+            ))}
+            <Select label="Emirate" selectedValue={detailsForm.emirate} onValueChange={(v) => setDetailField('emirate', v)}>
+              {EMIRATES.map((em) => (
+                <Select.Item key={em} label={em} value={em} />
+              ))}
+            </Select>
+            <Button variant={accent} loading={saving} onPress={submitDetailsForm}>
+              Save corrections
+            </Button>
+          </View>
+        )}
       </DarkCard>
 
       <DarkCard style={{ marginTop: 12 }}>
@@ -270,4 +389,5 @@ const styles = StyleSheet.create({
   blockedLabel: { fontFamily: fonts.sans, fontSize: 13, color: colors.white70, flex: 1 },
   transferForm: { marginTop: 16, borderRadius: 10, borderWidth: 1, borderColor: colors.white8, backgroundColor: colors.white4, padding: 12 },
   transferCaption: { fontFamily: fonts.sans, fontSize: 11, color: colors.white40, marginTop: 12 },
+  linkText: { fontFamily: fonts.sansSemiBold, fontSize: 13, color: colors.gold, textDecorationLine: 'underline' },
 });

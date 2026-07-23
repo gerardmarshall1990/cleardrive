@@ -34,4 +34,31 @@ async function uploadGeneratedDoc(filePath, storagePath) {
   return data.signedUrl;
 }
 
-module.exports = { uploadGeneratedDoc, DOCUMENTS_BUCKET };
+/**
+ * Uploads a user-submitted photo (Mulkiya, bank settlement letter, etc.) to
+ * the same private bucket generated documents use, so admin can review the
+ * original source image if Claude Vision's extraction turns out to be wrong.
+ * Saved regardless of whether extraction succeeds — a failed extraction is
+ * exactly when admin most needs to see the raw photo.
+ * @param {string} base64 - raw base64 image data (no data: URL prefix)
+ * @param {string} mediaType - e.g. 'image/jpeg'
+ * @param {string} storagePath - destination path within the bucket, e.g. `${dealId}/mulkiya-<timestamp>.jpg`
+ * @returns {Promise<string>} a signed URL for the uploaded file
+ */
+async function uploadUserImage(base64, mediaType, storagePath) {
+  const buffer = Buffer.from(base64, 'base64');
+
+  const { error: uploadError } = await supabaseAdmin.storage
+    .from(DOCUMENTS_BUCKET)
+    .upload(storagePath, buffer, { contentType: mediaType || 'image/jpeg', upsert: true });
+  if (uploadError) throw new Error(`Failed to upload ${storagePath} to storage: ${uploadError.message}`);
+
+  const { data, error: signError } = await supabaseAdmin.storage
+    .from(DOCUMENTS_BUCKET)
+    .createSignedUrl(storagePath, SIGNED_URL_TTL_SECONDS);
+  if (signError) throw new Error(`Failed to create signed URL for ${storagePath}: ${signError.message}`);
+
+  return data.signedUrl;
+}
+
+module.exports = { uploadGeneratedDoc, uploadUserImage, DOCUMENTS_BUCKET };
