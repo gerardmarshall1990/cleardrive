@@ -480,6 +480,28 @@ function KycPartyBlock({ party, label, deal, isOwner, note, onUpdate, onError })
 
 const EMIRATES = ['Dubai', 'Abu Dhabi', 'Sharjah', 'Ajman', 'Ras Al Khaimah', 'Fujairah', 'Umm Al Quwain'];
 
+// Every field the Details stage form collects is required — most autofill
+// from the Mulkiya via Claude Vision, but mileage in particular can never be
+// read off a Mulkiya (not printed on the document) and must always be typed
+// in manually. Mirrors backend's REQUIRED_FIELDS_TO_LEAVE[STAGES.DETAILS].
+const REQUIRED_DETAIL_FIELDS = [
+  { key: 'plate', label: 'Plate number' },
+  { key: 'vin', label: 'VIN' },
+  { key: 'make', label: 'Make' },
+  { key: 'model', label: 'Model' },
+  { key: 'year', label: 'Year' },
+  { key: 'colour', label: 'Colour' },
+  { key: 'mileage', label: 'Mileage' },
+  { key: 'seller_iban', label: 'IBAN' },
+  { key: 'seller_acc_name', label: 'Account holder name' },
+  { key: 'seller_proc_bank', label: 'Bank' },
+];
+const REQUIRED_LOAN_FIELDS = [
+  { key: 'loan_amount', label: 'Settlement amount' },
+  { key: 'loan_account', label: 'Loan reference number' },
+  { key: 'loan_bank', label: 'Bank' },
+];
+
 // Shared dropzone for the document-driven autofill flows (Mulkiya, settlement
 // letter, Emirates ID) — mirrors FinesVerifyCard's dropzone, sized down.
 function UploadDropzone({ label, text = 'Tap to upload photo', busy, onPick }) {
@@ -611,6 +633,14 @@ function DetailsCard({ deal, accent, onUpdate, onError }) {
     onError('');
     if (!mulkiyaVerified) return onError('Please upload the Mulkiya (vehicle registration card) before continuing.');
     if (deal.product === 'loanclear' && !settlementVerified) return onError('Please upload the bank settlement letter before continuing.');
+
+    const fieldsToCheck = deal.product === 'loanclear' ? [...REQUIRED_DETAIL_FIELDS, ...REQUIRED_LOAN_FIELDS] : REQUIRED_DETAIL_FIELDS;
+    const missingField = fieldsToCheck.find((f) => !String(form[f.key] ?? '').trim());
+    if (missingField) {
+      const hint = missingField.key === 'mileage' ? " — this can't be read from the Mulkiya, please enter it manually" : '';
+      return onError(`${missingField.label} is required${hint}.`);
+    }
+
     setLoading(true);
     try {
       if (!deal.buyer_id) {

@@ -23,7 +23,13 @@ const REQUIRED_FIELDS_TO_LEAVE = {
   [STAGES.QUOTE]: ['plate', 'sale_price', 'seller_id'],
   [STAGES.FINES_VERIFY]: ['fines_verified'],
   [STAGES.KYC]: ['seller_kyc_complete', 'buyer_kyc_complete'],
-  [STAGES.DETAILS]: ['vin', 'sale_price', 'seller_iban', 'seller_acc_name'],
+  // Every field the Details stage form collects is required — most are
+  // autofilled from the Mulkiya via Claude Vision, but mileage in particular
+  // can never be read off a Mulkiya (it isn't printed on the document) and
+  // must always be typed in manually. loan_amount/loan_account/loan_bank are
+  // LoanClear-only, handled by the conditional block below since a static
+  // per-stage list can't express "required only for one product".
+  [STAGES.DETAILS]: ['vin', 'make', 'model', 'year', 'colour', 'mileage', 'emirate', 'sale_price', 'seller_iban', 'seller_acc_name', 'seller_proc_bank'],
   [STAGES.SIGNING]: ['doc001_signed', 'doc002_signed'],
   [STAGES.ESCROW]: ['funds_confirmed'],
   [STAGES.TASJEEL]: ['transfer_cert_url'],
@@ -48,6 +54,15 @@ function validateRequiredFields(deal, fromStage) {
   if (fromStage === STAGES.ESCROW) {
     if (deal.product === 'loanclear' && deal.loan_cleared !== true) missing.push('loan_cleared');
     if (deal.fines_cleared !== true) missing.push('fines_cleared');
+  }
+
+  // LoanClear-only Details fields sourced from the bank settlement letter —
+  // required for LoanClear, not applicable to SafePay.
+  if (fromStage === STAGES.DETAILS && deal.product === 'loanclear') {
+    for (const field of ['loan_amount', 'loan_account', 'loan_bank']) {
+      const value = deal[field];
+      if (value === null || value === undefined || value === '') missing.push(field);
+    }
   }
 
   return missing;
