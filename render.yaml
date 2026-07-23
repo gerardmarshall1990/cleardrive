@@ -38,6 +38,10 @@ services:
         sync: false
       - key: TRUSTIN_MOCK_MODE
         value: "true"
+      - key: TRUSTIN_API_BASE_URL
+        sync: false # real TrustIn KYC API base URL — leave unset while TRUSTIN_MOCK_MODE is true
+      - key: TRUSTIN_WEBHOOK_SECRET
+        sync: false # set once TrustIn issues one — until then webhook signature verification is skipped (logged)
       - key: WHATSAPP_API_KEY
         sync: false
       - key: WHATSAPP_PHONE_NUMBER_ID

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, ScrollView, Linking, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import * as WebBrowser from 'expo-web-browser';
 import { DarkCard, GoldCard } from '../components/Card';
 import { Button } from '../components/Button';
 import { Input, Select } from '../components/Input';
@@ -316,10 +317,25 @@ function FinesVerifyCard({ deal, onUpdate, onError }) {
   );
 }
 
+// TrustIn is our escrow partner, regulated by the Abu Dhabi Global Market
+// Financial Services Regulatory Authority (ADGM/FSRA) — it cannot
+// white-label identity verification, so each party verifies directly with
+// TrustIn via UAE Pass (real integration pending TrustIn credentials; the
+// popup below is a mocked stand-in that mirrors the real flow exactly —
+// see backend/services/trustInKycService.js).
+const KYC_CONTEXT_LINE =
+  "TrustIn is our licensed escrow partner, regulated by the Abu Dhabi Global Market Financial Services Regulatory Authority (ADGM/FSRA). They securely hold funds during your sale and are legally required to verify your identity directly via UAE Pass before doing so — this keeps your money and your deal protected.";
+
+const KYC_STEPS = [
+  'Tap "Verify Me" below',
+  'A window will open — sign in with your UAE Pass app',
+  'Complete the verification steps shown',
+  "Once done, the window closes automatically and you'll see a checkmark here",
+];
+
 function KycCard({ deal, myRole, accent, onUpdate, onError }) {
   const [loading, setLoading] = useState(false);
   const bothComplete = deal.seller_kyc_complete && deal.buyer_kyc_complete;
-  const myComplete = myRole === 'seller' ? deal.seller_kyc_complete : deal.buyer_kyc_complete;
 
   async function handleContinue() {
     setLoading(true);
@@ -337,16 +353,18 @@ function KycCard({ deal, myRole, accent, onUpdate, onError }) {
   return (
     <DarkCard style={{ marginTop: 24 }}>
       <Text style={[styles.cardTitle, { marginBottom: 12 }]}>Identity verification</Text>
-      <View style={styles.kycGrid}>
-        <PartyKycStatus label={myRole === 'seller' ? 'You (seller)' : 'Seller'} complete={deal.seller_kyc_complete} />
-        <PartyKycStatus
-          label={myRole === 'buyer' ? 'You (buyer)' : 'Buyer'}
-          complete={deal.buyer_kyc_complete}
+      <View style={{ gap: 12 }}>
+        <KycPartyBlock party="seller" label="Seller" deal={deal} isOwner={myRole === 'seller'} onUpdate={onUpdate} onError={onError} />
+        <KycPartyBlock
+          party="buyer"
+          label="Buyer"
+          deal={deal}
+          isOwner={myRole === 'buyer'}
           note={myRole === 'seller' && !deal.buyer_id ? 'No buyer attached yet' : undefined}
+          onUpdate={onUpdate}
+          onError={onError}
         />
       </View>
-
-      {!myComplete && <EidVerifyForm deal={deal} onUpdate={onUpdate} onError={onError} />}
 
       {myRole === 'seller' ? (
         <>
@@ -356,7 +374,7 @@ function KycCard({ deal, myRole, accent, onUpdate, onError }) {
           </Button>
         </>
       ) : (
-        myComplete && !deal.seller_kyc_complete && (
+        deal.buyer_kyc_complete && !deal.seller_kyc_complete && (
           <Text style={[styles.cardBody, { marginTop: 12 }]}>You're verified — waiting on the seller.</Text>
         )
       )}
@@ -364,88 +382,98 @@ function KycCard({ deal, myRole, accent, onUpdate, onError }) {
   );
 }
 
-// Emirates ID upload → Claude Vision extraction → editable review → explicit
-// confirm-and-lock via PATCH /:id/kyc. Extraction never auto-saves — the
-// extracted fields populate the form below for the user to check/edit before
-// they hit "Confirm". Manual typing (leaving the upload step unused) remains
-// a full fallback if extraction fails or the photo isn't available.
-function EidVerifyForm({ deal, onUpdate, onError }) {
-  const [busy, setBusy] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ fullName: '', eidNumber: '', nationality: '' });
-  const [extractMsg, setExtractMsg] = useState(null);
+// One independent verification block per party. Only the owning party sees
+// a clickable "Verify Me" button; the other party's block is read-only
+// status. Tapping it calls POST /:id/kyc/initiate (trustInKycService.js),
+// opens the returned verificationUrl in an in-app browser (WebBrowser —
+// the RN equivalent of a real popup window), then polls the deal until this
+// party's *_kyc_complete flag flips (set by the TrustIn webhook once the
+// popup posts its mock/real completion), at which point it dismisses the
+// browser itself and shows the checkmark.
+function KycPartyBlock({ party, label, deal, isOwner, note, onUpdate, onError }) {
+  const complete = party === 'seller' ? deal.seller_kyc_complete : deal.buyer_kyc_complete;
+  const [status, setStatus] = useState(complete ? 'verified' : 'idle'); // idle | opening | pending | verified
+  const pollRef = useRef(null);
 
-  function set(field, value) {
-    setForm((f) => ({ ...f, [field]: value }));
-  }
+  useEffect(() => {
+    if (complete) setStatus('verified');
+  }, [complete]);
 
-  async function handlePick() {
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) return onError('Photo library permission is required to upload a photo');
+  useEffect(() => () => clearInterval(pollRef.current), []);
 
-    const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      base64: true,
-      quality: 0.8,
-    });
-    if (res.canceled || !res.assets?.[0]) return;
-
-    setBusy(true);
+  async function handleVerify() {
     onError('');
-    setExtractMsg(null);
+    setStatus('opening');
     try {
-      const { base64, mediaType } = await assetToBase64(res.assets[0]);
-      const { data } = await api.post(`/api/deals/${deal.id}/extract-eid`, { imageBase64: base64, mediaType });
-      setForm({ fullName: data.fullName || '', eidNumber: data.eidNumber || '', nationality: data.nationality || '' });
-      setExtractMsg({ ok: true, text: 'Extracted from your Emirates ID — check the fields below and edit anything that looks wrong, then confirm.' });
-    } catch (err) {
-      setExtractMsg({ ok: false, text: `${err.message} — enter your details manually below.` });
-    } finally {
-      setBusy(false);
-    }
-  }
+      const { verificationUrl } = await api.post(`/api/deals/${deal.id}/kyc/initiate`);
+      setStatus('pending');
 
-  async function handleConfirm() {
-    if (!form.fullName.trim() || !form.eidNumber.trim()) return onError('Full name and Emirates ID number are required');
-    setSaving(true);
-    onError('');
-    try {
-      const { deal: updated } = await api.patch(`/api/deals/${deal.id}/kyc`, form);
-      onUpdate(updated);
+      pollRef.current = setInterval(async () => {
+        try {
+          const { deal: updated } = await api.get(`/api/deals/${deal.id}`);
+          const nowComplete = party === 'seller' ? updated.seller_kyc_complete : updated.buyer_kyc_complete;
+          if (nowComplete) {
+            clearInterval(pollRef.current);
+            WebBrowser.dismissBrowser();
+            setStatus('verified');
+            onUpdate(updated);
+          }
+        } catch {
+          // Transient poll error — next tick will retry.
+        }
+      }, 1500);
+
+      const result = await WebBrowser.openBrowserAsync(verificationUrl);
+      clearInterval(pollRef.current);
+      if (result.type !== 'dismiss' && result.type !== 'cancel') return;
+      // Final check in case the flag flipped right as the browser closed.
+      const { deal: updated } = await api.get(`/api/deals/${deal.id}`);
+      const nowComplete = party === 'seller' ? updated.seller_kyc_complete : updated.buyer_kyc_complete;
+      setStatus(nowComplete ? 'verified' : 'idle');
+      if (nowComplete) onUpdate(updated);
     } catch (err) {
+      clearInterval(pollRef.current);
       onError(err.message);
-    } finally {
-      setSaving(false);
+      setStatus('idle');
     }
   }
 
   return (
-    <View style={styles.eidBox}>
-      <Text style={styles.eidTitle}>Your identity verification (Emirates ID)</Text>
-      <UploadDropzone text="Tap to upload your Emirates ID photo" busy={busy} onPick={handlePick} />
-      {extractMsg && (extractMsg.ok ? <Text style={styles.savedMsg}>{extractMsg.text}</Text> : <ErrorBanner message={extractMsg.text} />)}
+    <View style={styles.kycBlock}>
+      <Text style={styles.kycContextLine}>{KYC_CONTEXT_LINE}</Text>
+      <Text style={styles.kycHeadline}>{label} Identity Verification</Text>
 
-      <Text style={styles.eidWarning}>
-        Double-check this matches your Emirates ID exactly, letter for letter — this name is used on legally binding deal documents.
-      </Text>
-
-      <View style={{ gap: 10, marginTop: 10 }}>
-        <Input label="Full name" value={form.fullName} onChangeText={(v) => set('fullName', v)} />
-        <Input label="Emirates ID number" value={form.eidNumber} onChangeText={(v) => set('eidNumber', v)} />
-        <Button variant="secondary" loading={saving} onPress={handleConfirm}>
-          Confirm & verify identity
-        </Button>
-      </View>
-    </View>
-  );
-}
-
-function PartyKycStatus({ label, complete, note }) {
-  return (
-    <View style={styles.kycCell}>
-      <Text style={styles.kycLabel}>{label}</Text>
-      <View style={{ marginTop: 8 }}>{complete ? <Badge variant="verified">Complete ✓</Badge> : <Badge variant="pending">Pending</Badge>}</View>
-      {note && <Text style={styles.kycNote}>{note}</Text>}
+      {status === 'verified' ? (
+        <View style={{ marginTop: 10 }}>
+          <Badge variant="verified">✅ Verified</Badge>
+        </View>
+      ) : (
+        <>
+          <View style={{ marginTop: 6, gap: 3 }}>
+            {KYC_STEPS.map((step, i) => (
+              <Text key={step} style={styles.kycStep}>
+                {i + 1}. {step}
+              </Text>
+            ))}
+          </View>
+          {isOwner ? (
+            <Button
+              variant="secondary"
+              loading={status === 'opening' || status === 'pending'}
+              disabled={status === 'pending'}
+              onPress={handleVerify}
+              style={{ marginTop: 10 }}
+            >
+              {status === 'pending' ? 'Waiting for verification…' : 'Verify Me'}
+            </Button>
+          ) : (
+            <View style={{ marginTop: 10 }}>
+              <Badge variant="pending">Pending</Badge>
+            </View>
+          )}
+          {note && <Text style={styles.kycNote}>{note}</Text>}
+        </>
+      )}
     </View>
   );
 }
@@ -813,7 +841,11 @@ const styles = StyleSheet.create({
   kycGrid: { flexDirection: 'row', gap: 12 },
   kycCell: { flex: 1, borderRadius: 10, borderWidth: 1, borderColor: colors.white8, backgroundColor: colors.white4, padding: 14, alignItems: 'center' },
   kycLabel: { fontFamily: fonts.sansBold, fontSize: 11, color: colors.white40, textTransform: 'uppercase', letterSpacing: 0.5 },
-  kycNote: { fontFamily: fonts.sans, fontSize: 11, color: colors.white30, marginTop: 6, textAlign: 'center' },
+  kycNote: { fontFamily: fonts.sans, fontSize: 11, color: colors.white30, marginTop: 6 },
+  kycBlock: { borderRadius: 10, borderWidth: 1, borderColor: colors.white8, backgroundColor: colors.white4, padding: 14 },
+  kycContextLine: { fontFamily: fonts.sans, fontSize: 11, color: colors.white50, lineHeight: 16 },
+  kycHeadline: { fontFamily: fonts.display, fontSize: 15, color: colors.white, marginTop: 8 },
+  kycStep: { fontFamily: fonts.sans, fontSize: 12, color: colors.white50 },
   sectionLabel: { fontFamily: fonts.sansBold, fontSize: 11, color: colors.white40, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 8 },
   uploadLabel: { fontFamily: fonts.sans, fontSize: 13, color: colors.white50, marginBottom: 8 },
   dropzoneSmall: {

@@ -20,6 +20,7 @@ const dealRoutes = require('./routes/dealRoutes');
 const partnerRoutes = require('./routes/partnerRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const webhookRoutes = require('./routes/webhookRoutes');
+const mockRoutes = require('./routes/mockRoutes');
 const { globalErrorHandler, notFoundHandler } = require('./middleware/errorHandler');
 const { startAutomationEngine } = require('./services/automationEngine');
 const logger = require('./utils/logger');
@@ -32,6 +33,11 @@ if (missingEnv.length > 0) {
 }
 
 const app = express();
+// Behind Render's (and any other) reverse proxy so req.protocol/req.secure
+// reflect the original https request rather than the internal http hop —
+// needed so the mock TrustIn/UAE Pass popup URL (built from req.protocol +
+// req.get('host')) is correct in production.
+app.set('trust proxy', 1);
 
 // Restrict cross-origin requests to the real frontend(s). Native mobile HTTP
 // clients aren't browsers and don't send an Origin header, so this has no
@@ -43,17 +49,16 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || process.env.APP_BASE_URL 
   .map((o) => o.trim())
   .filter(Boolean);
 
+const corsMiddleware = cors({
+  origin(origin, callback) {
+    // Allow no-Origin requests (curl, mobile apps, server-to-server) and
+    // any explicitly allow-listed browser origin.
+    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error(`Origin ${origin} not allowed by CORS`));
+  },
+});
+
 app.use(helmet());
-app.use(
-  cors({
-    origin(origin, callback) {
-      // Allow no-Origin requests (curl, mobile apps, server-to-server) and
-      // any explicitly allow-listed browser origin.
-      if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
-      return callback(new Error(`Origin ${origin} not allowed by CORS`));
-    },
-  })
-);
 app.use(morgan('dev'));
 // verify captures the raw request bytes onto req.rawBody — needed so webhook
 // signature verification (middleware/webhookSignature.js) can HMAC the exact
@@ -64,11 +69,20 @@ app.use(express.urlencoded({ extended: true }));
 
 app.get('/health', (req, res) => res.json({ status: 'ok', service: 'cleardrive-backend', time: new Date().toISOString() }));
 
+// /webhooks and /mock are intentionally NOT behind the browser-CORS check
+// above: webhook calls are server-to-server (no Origin header) and the mock
+// TrustIn/UAE Pass popup page (served here) calls /webhooks/trustin as a
+// same-origin POST, which browsers attach an Origin header to — that origin
+// is this backend's own host, never one of the frontend ALLOWED_ORIGINS, so
+// applying the frontend-only CORS check here would break the mock flow.
+app.use('/webhooks', webhookRoutes);
+app.use('/mock', mockRoutes);
+
+app.use('/api', corsMiddleware);
 app.use('/api/auth', authRoutes);
 app.use('/api/deals', dealRoutes);
 app.use('/api/partners', partnerRoutes);
 app.use('/api/admin', adminRoutes);
-app.use('/webhooks', webhookRoutes);
 
 app.use(notFoundHandler);
 app.use(globalErrorHandler);

@@ -31,7 +31,8 @@
         {
           "photosPermission": "Allow ClearDrive to access your photos to upload deal documents (Emirates ID, Mulkiya, fines screenshot, settlement letter)."
         }
-      ]
+      ],
+      "expo-web-browser"
     ]
   }
 }

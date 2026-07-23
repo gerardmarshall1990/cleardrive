@@ -23,6 +23,15 @@ async function handleTrustInWebhook(req, res) {
   }
 
   try {
+    // kyc_verified fires before a deal ever reaches ESCROW, so it has no
+    // trustin_deal_id to correlate against — it's looked up via its own
+    // trustin_kyc_sessions row instead (see trustInKycService.js).
+    if (eventType === 'kyc_verified') {
+      const matched = await handleKycVerified(req.body);
+      if (eventRow) await supabaseAdmin.from('webhook_events').update({ processed: true }).eq('id', eventRow.id);
+      return res.status(200).json({ received: true, matched });
+    }
+
     const { data: deal } = await supabaseAdmin.from('deals').select('*').eq('trustin_deal_id', trustinDealId).single();
 
     if (!deal) {
@@ -98,6 +107,44 @@ async function handleLoanCleared(deal) {
 async function handleFinesCleared(deal) {
   await supabaseAdmin.from('deals').update({ fines_cleared: true }).eq('id', deal.id);
   await maybeAdvanceToTasjeel({ ...deal, fines_cleared: true });
+}
+
+// Handles TrustIn's 'kyc_verified' event — real shape: { event_type,
+// session_id, full_name, emirates_id_number, nationality }. Mirrors what
+// confirmKyc previously did manually (save identity to users, flip the
+// deal's seller/buyer_kyc_complete flag), but now driven by TrustIn's own
+// UAE Pass verification instead of a manually-uploaded Emirates ID photo.
+async function handleKycVerified(body) {
+  const { session_id: sessionId, full_name: fullName, emirates_id_number: emiratesId, nationality } = body;
+  if (!sessionId) {
+    logger.warn('TrustIn kyc_verified webhook missing session_id');
+    return false;
+  }
+
+  const { data: session, error } = await supabaseAdmin.from('trustin_kyc_sessions').select('*').eq('id', sessionId).single();
+  if (error || !session) {
+    logger.warn('TrustIn kyc_verified webhook for unknown session', { sessionId });
+    return false;
+  }
+
+  await supabaseAdmin
+    .from('trustin_kyc_sessions')
+    .update({ status: 'verified', full_name: fullName, emirates_id: emiratesId, nationality: nationality || null, verified_at: new Date().toISOString() })
+    .eq('id', sessionId);
+
+  const { data: deal } = await supabaseAdmin.from('deals').select('*').eq('id', session.deal_id).single();
+  if (!deal) return false;
+
+  const partyUserId = session.party === 'seller' ? deal.seller_id : deal.buyer_id;
+  if (partyUserId && fullName && emiratesId) {
+    const userUpdates = { full_name: fullName, emirates_id: emiratesId };
+    if (nationality) userUpdates.nationality = nationality;
+    await supabaseAdmin.from('users').update(userUpdates).eq('id', partyUserId);
+  }
+
+  const dealUpdates = session.party === 'seller' ? { seller_kyc_complete: true } : { buyer_kyc_complete: true };
+  await supabaseAdmin.from('deals').update(dealUpdates).eq('id', deal.id);
+  return true;
 }
 
 async function maybeAdvanceToTasjeel(deal) {

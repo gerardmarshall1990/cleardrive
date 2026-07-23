@@ -7,6 +7,7 @@ const feeCalculator = require('../services/feeCalculator');
 const dealFlowEngine = require('../services/dealFlowEngine');
 const finesVerification = require('../services/finesVerificationService');
 const documentVision = require('../services/documentVisionService');
+const trustInKycService = require('../services/trustInKycService');
 const docGen = require('../services/documentGenerator');
 const whatsAppService = require('../services/whatsAppService');
 const emailService = require('../services/emailService');
@@ -486,40 +487,16 @@ async function extractSettlement(req, res) {
 }
 
 /**
- * POST /api/deals/:id/extract-eid — accepts a base64 Emirates ID photo, runs
- * Claude Vision extraction, and returns the extracted identity fields for the
- * uploading party (seller or buyer) to confirm/edit before saving via
- * PATCH /:id/kyc. Never writes to the DB directly.
+ * POST /api/deals/:id/kyc/initiate — starts TrustIn/UAE Pass identity
+ * verification for whichever party is calling (seller or buyer on this
+ * deal, inferred from the logged-in user — never client-supplied, so a
+ * party can only ever initiate their own verification). Returns a
+ * verificationUrl to open in a popup; see trustInKycService.js. Replaces
+ * the old manual Emirates ID upload + Claude Vision extraction flow for
+ * this stage — TrustIn (ADGM/FSRA-regulated) legally requires direct
+ * verification via UAE Pass, it cannot be white-labelled through us.
  */
-async function extractEid(req, res) {
-  const { imageBase64, mediaType } = req.body;
-  if (!imageBase64) return res.status(400).json({ error: 'imageBase64 is required' });
-  const imageError = validateImageUpload(imageBase64, mediaType);
-  if (imageError) return res.status(400).json({ error: imageError });
-
-  const { data: deal, error } = await supabaseAdmin.from('deals').select('id, seller_id, buyer_id').eq('id', req.params.id).single();
-  if (error || !deal) return res.status(404).json({ error: 'Deal not found' });
-  if (deal.seller_id !== req.appUser.id && deal.buyer_id !== req.appUser.id) {
-    return res.status(403).json({ error: 'You are not a party to this deal' });
-  }
-
-  const result = await documentVision.extractEmiratesId({ imageBase64, mediaType });
-  if (!result.success) return res.status(422).json({ extracted: false, error: result.reason, reason: result.reason });
-
-  return res.json({ extracted: true, data: result.data });
-}
-
-/**
- * PATCH /api/deals/:id/kyc — saves the confirmed (Claude Vision-extracted, or
- * manually entered) identity fields for whichever party is calling — seller or
- * buyer on this deal — to their `users` row, and flips the corresponding
- * deals.seller_kyc_complete / buyer_kyc_complete flag. Scoped so a user can only
- * confirm their own KYC, and only if they're actually a party to this deal.
- */
-async function confirmKyc(req, res) {
-  const { fullName, eidNumber, nationality } = req.body;
-  if (!fullName || !eidNumber) return res.status(400).json({ error: 'fullName and eidNumber are required' });
-
+async function initiateKyc(req, res) {
   const { data: deal, error } = await supabaseAdmin.from('deals').select('*').eq('id', req.params.id).single();
   if (error || !deal) return res.status(404).json({ error: 'Deal not found' });
 
@@ -527,17 +504,15 @@ async function confirmKyc(req, res) {
   const isBuyer = deal.buyer_id === req.appUser.id;
   if (!isSeller && !isBuyer) return res.status(403).json({ error: 'You are not a party to this deal' });
 
-  const userUpdates = { full_name: fullName, emirates_id: eidNumber };
-  if (nationality) userUpdates.nationality = nationality;
+  const party = isSeller ? 'seller' : 'buyer';
+  const backendBaseUrl = process.env.BACKEND_PUBLIC_URL || `${req.protocol}://${req.get('host')}`;
 
-  const { error: userErr } = await supabaseAdmin.from('users').update(userUpdates).eq('id', req.appUser.id);
-  if (userErr) return res.status(500).json({ error: 'Could not save identity details — please try again' });
-
-  const dealUpdates = isSeller ? { seller_kyc_complete: true } : { buyer_kyc_complete: true };
-  const { data: updated, error: dealErr } = await supabaseAdmin.from('deals').update(dealUpdates).eq('id', deal.id).select().single();
-  if (dealErr) return res.status(500).json({ error: 'Could not update KYC status — please try again' });
-
-  return res.json({ deal: updated });
+  try {
+    const result = await trustInKycService.initiateVerification({ deal, party, backendBaseUrl });
+    return res.json(result);
+  } catch (err) {
+    return res.status(502).json({ error: err.message || 'Could not start identity verification — please try again' });
+  }
 }
 
 /**
@@ -755,8 +730,7 @@ module.exports = {
   verifyFines,
   extractMulkiya,
   extractSettlement,
-  extractEid,
-  confirmKyc,
+  initiateKyc,
   generateDocs,
   getDocs,
   completeDeal,

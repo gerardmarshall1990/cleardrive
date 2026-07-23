@@ -580,10 +580,25 @@ function WaitingCard({ title, body }) {
 // Shared between both roles — identity verification, signing, escrow, complete.
 // ---------------------------------------------------------------------------
 
+// TrustIn is our escrow partner, regulated by the Abu Dhabi Global Market
+// Financial Services Regulatory Authority (ADGM/FSRA) — it cannot
+// white-label identity verification, so each party verifies directly with
+// TrustIn via UAE Pass (real integration pending TrustIn credentials; the
+// popup below is a mocked stand-in that mirrors the real flow exactly —
+// see backend/services/trustInKycService.js).
+const KYC_CONTEXT_LINE =
+  "TrustIn is our licensed escrow partner, regulated by the Abu Dhabi Global Market Financial Services Regulatory Authority (ADGM/FSRA). They securely hold funds during your sale and are legally required to verify your identity directly via UAE Pass before doing so — this keeps your money and your deal protected.";
+
+const KYC_STEPS = [
+  'Click "Verify Me" below',
+  'A window will open — sign in with your UAE Pass app',
+  'Complete the verification steps shown',
+  "Once done, the window closes automatically and you'll see a checkmark here",
+];
+
 function KycCard({ deal, accent, myRole, onUpdate, onError }) {
   const [loading, setLoading] = useState(false);
   const bothComplete = deal.seller_kyc_complete && deal.buyer_kyc_complete;
-  const myComplete = myRole === 'seller' ? deal.seller_kyc_complete : deal.buyer_kyc_complete;
 
   async function handleContinue() {
     setLoading(true);
@@ -601,16 +616,18 @@ function KycCard({ deal, accent, myRole, onUpdate, onError }) {
   return (
     <DarkCard>
       <h4 className="font-display text-lg font-semibold text-white mb-4">Identity verification</h4>
-      <div className="grid grid-cols-2 gap-3">
-        <PartyKycStatus label={myRole === 'seller' ? 'You (seller)' : 'Seller'} complete={deal.seller_kyc_complete} />
-        <PartyKycStatus
-          label={myRole === 'buyer' ? 'You (buyer)' : 'Buyer'}
-          complete={deal.buyer_kyc_complete}
+      <div className="flex flex-col gap-4">
+        <KycPartyBlock party="seller" label="Seller" deal={deal} isOwner={myRole === 'seller'} onUpdate={onUpdate} onError={onError} />
+        <KycPartyBlock
+          party="buyer"
+          label="Buyer"
+          deal={deal}
+          isOwner={myRole === 'buyer'}
           note={myRole === 'seller' && !deal.buyer_id ? 'No buyer attached yet' : undefined}
+          onUpdate={onUpdate}
+          onError={onError}
         />
       </div>
-
-      {!myComplete && <EidVerifyForm deal={deal} onUpdate={onUpdate} onError={onError} />}
 
       {myRole === 'seller' ? (
         <>
@@ -620,100 +637,99 @@ function KycCard({ deal, accent, myRole, onUpdate, onError }) {
           </Button>
         </>
       ) : (
-        myComplete && !deal.seller_kyc_complete && <p className="mt-4 text-sm text-white/50">You're verified — waiting on the seller.</p>
+        deal.buyer_kyc_complete && !deal.seller_kyc_complete && <p className="mt-4 text-sm text-white/50">You're verified — waiting on the seller.</p>
       )}
     </DarkCard>
   );
 }
 
-// Emirates ID upload → Claude Vision extraction → editable review → explicit
-// confirm-and-lock via PATCH /:id/kyc. Extraction never auto-saves — the
-// extracted fields populate the form below for the user to check/edit before
-// they hit "Confirm". Manual typing (leaving the upload step unused) remains
-// a full fallback if extraction fails or the photo isn't available.
-function EidVerifyForm({ deal, onUpdate, onError }) {
-  const [busy, setBusy] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ fullName: '', eidNumber: '', nationality: '' });
-  const [extractMsg, setExtractMsg] = useState(null);
+// One independent verification block per party. Only the owning party sees
+// a clickable "Verify Me" button; the other party's block is read-only
+// status. Clicking it calls POST /:id/kyc/initiate (trustInKycService.js),
+// opens a real popup at the returned verificationUrl, then polls the deal
+// until this party's *_kyc_complete flag flips (set by the TrustIn webhook
+// once the popup posts its mock/real completion), at which point it closes
+// the popup itself and shows the checkmark.
+function KycPartyBlock({ party, label, deal, isOwner, note, onUpdate, onError }) {
+  const complete = party === 'seller' ? deal.seller_kyc_complete : deal.buyer_kyc_complete;
+  const [status, setStatus] = useState(complete ? 'verified' : 'idle'); // idle | opening | pending | verified
+  const pollRef = useRef(null);
 
-  function set(field) {
-    return (e) => setForm((f) => ({ ...f, [field]: e.target.value }));
-  }
+  useEffect(() => {
+    if (complete) setStatus('verified');
+  }, [complete]);
 
-  async function handleFile(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setBusy(true);
+  useEffect(() => () => clearInterval(pollRef.current), []);
+
+  async function handleVerify() {
     onError('');
-    setExtractMsg(null);
+    setStatus('opening');
     try {
-      const { base64, mediaType } = await fileToBase64(file);
-      const { data } = await api.post(`/api/deals/${deal.id}/extract-eid`, { imageBase64: base64, mediaType });
-      setForm({ fullName: data.fullName || '', eidNumber: data.eidNumber || '', nationality: data.nationality || '' });
-      setExtractMsg({ ok: true, text: 'Extracted from your Emirates ID — check the fields below and edit anything that looks wrong, then confirm.' });
-    } catch (err) {
-      setExtractMsg({ ok: false, text: `${err.message} — enter your details manually below.` });
-    } finally {
-      setBusy(false);
-      e.target.value = '';
-    }
-  }
-
-  async function handleConfirm(e) {
-    e.preventDefault();
-    if (!form.fullName.trim() || !form.eidNumber.trim()) return onError('Full name and Emirates ID number are required');
-    setSaving(true);
-    onError('');
-    try {
-      const { deal: updated } = await api.patch(`/api/deals/${deal.id}/kyc`, form);
-      onUpdate(updated);
+      const { verificationUrl } = await api.post(`/api/deals/${deal.id}/kyc/initiate`);
+      const popup = window.open(verificationUrl, 'trustin_kyc', 'width=420,height=640');
+      if (!popup) {
+        onError('Please allow popups for this site to verify your identity.');
+        setStatus('idle');
+        return;
+      }
+      setStatus('pending');
+      pollRef.current = setInterval(async () => {
+        try {
+          const { deal: updated } = await api.get(`/api/deals/${deal.id}`);
+          const nowComplete = party === 'seller' ? updated.seller_kyc_complete : updated.buyer_kyc_complete;
+          if (nowComplete) {
+            clearInterval(pollRef.current);
+            if (!popup.closed) popup.close();
+            setStatus('verified');
+            onUpdate(updated);
+          } else if (popup.closed) {
+            clearInterval(pollRef.current);
+            setStatus('idle');
+          }
+        } catch {
+          // Transient poll error — next tick will retry.
+        }
+      }, 1500);
     } catch (err) {
       onError(err.message);
-    } finally {
-      setSaving(false);
+      setStatus('idle');
     }
   }
 
   return (
-    <div className="mt-4 rounded-lg border border-white/8 bg-white/4 p-4">
-      <p className="text-sm text-white/70 mb-3">Your identity verification (Emirates ID)</p>
-      <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-gold/40 py-6 text-center hover:border-gold transition-colors">
-        {busy ? (
-          <span className="h-5 w-5 animate-spin rounded-full border-2 border-gold border-t-transparent" />
-        ) : (
-          <>
-            <span className="text-xl">📤</span>
-            <span className="text-xs text-white/60">Tap to upload your Emirates ID photo</span>
-          </>
-        )}
-        <input type="file" accept="image/*" className="hidden" onChange={handleFile} disabled={busy} />
-      </label>
-      {extractMsg && (extractMsg.ok ? <p className="mt-2 text-xs text-green">{extractMsg.text}</p> : <ErrorBanner message={extractMsg.text} />)}
+    <div className="rounded-lg border border-white/8 bg-white/4 p-4">
+      <p className="text-xs text-white/50 leading-relaxed">{KYC_CONTEXT_LINE}</p>
+      <h5 className="font-display text-base font-semibold text-white mt-3">{label} Identity Verification</h5>
 
-      <p className="mt-3 text-xs font-semibold text-gold">
-        Double-check this matches your Emirates ID exactly, letter for letter — this name is used on legally binding deal documents.
-      </p>
-
-      <form onSubmit={handleConfirm} className="flex flex-col gap-3 mt-3">
-        <Input label="Full name" value={form.fullName} onChange={set('fullName')} />
-        <Input label="Emirates ID number" value={form.eidNumber} onChange={set('eidNumber')} />
-        <Button type="submit" variant="secondary" loading={saving} className="w-full">
-          Confirm & verify identity
-        </Button>
-      </form>
-    </div>
-  );
-}
-
-function PartyKycStatus({ label, complete, note }) {
-  return (
-    <div className="rounded-lg border border-white/8 bg-white/4 p-4 text-center">
-      <p className="text-xs uppercase tracking-wide text-white/40 font-sans font-bold">{label}</p>
-      <div className="mt-2">
-        {complete ? <Badge variant="verified">Complete ✓</Badge> : <Badge variant="pending">Pending</Badge>}
-      </div>
-      {note && <p className="mt-2 text-xs text-white/30">{note}</p>}
+      {status === 'verified' ? (
+        <div className="mt-3">
+          <Badge variant="verified">✅ Verified</Badge>
+        </div>
+      ) : (
+        <>
+          <ol className="mt-2 list-decimal list-inside text-xs text-white/60 space-y-1">
+            {KYC_STEPS.map((step) => (
+              <li key={step}>{step}</li>
+            ))}
+          </ol>
+          {isOwner ? (
+            <Button
+              variant="secondary"
+              loading={status === 'opening'}
+              disabled={status === 'pending'}
+              onClick={handleVerify}
+              className="mt-3 w-full"
+            >
+              {status === 'pending' ? 'Waiting for verification…' : 'Verify Me'}
+            </Button>
+          ) : (
+            <div className="mt-3">
+              <Badge variant="pending">Pending</Badge>
+            </div>
+          )}
+          {note && <p className="mt-2 text-xs text-white/30">{note}</p>}
+        </>
+      )}
     </div>
   );
 }

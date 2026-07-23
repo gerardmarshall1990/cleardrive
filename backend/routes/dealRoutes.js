@@ -75,21 +75,7 @@ router.post(
   asyncHandler(dealController.extractSettlement)
 );
 
-router.post(
-  '/:id/extract-eid',
-  requireAuth,
-  [body('imageBase64').isString().notEmpty()],
-  validate,
-  asyncHandler(dealController.extractEid)
-);
-
-router.patch(
-  '/:id/kyc',
-  requireAuth,
-  [body('fullName').isString().notEmpty(), body('eidNumber').isString().notEmpty()],
-  validate,
-  asyncHandler(dealController.confirmKyc)
-);
+router.post('/:id/kyc/initiate', requireAuth, asyncHandler(dealController.initiateKyc));
 
 router.patch('/:id/details', requireAuth, asyncHandler(dealController.updateDetails));
 
