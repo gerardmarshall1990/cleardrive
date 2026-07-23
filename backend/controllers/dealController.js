@@ -425,9 +425,23 @@ async function verifyFines(req, res) {
     cdFee,
   });
 
+  let finesScreenshotUrl;
+  try {
+    const ext = mediaType === 'image/png' ? 'png' : 'jpg';
+    finesScreenshotUrl = await storageService.uploadUserImage(imageBase64, mediaType, `${deal.id}/fines-${Date.now()}.${ext}`);
+  } catch (uploadErr) {
+    logger.warn('Fines screenshot upload failed — continuing with verification only', { error: uploadErr.message, dealId: deal.id });
+  }
+
   const { data: updated, error: updateErr } = await supabaseAdmin
     .from('deals')
-    .update({ fines_amount: result.finesAed, fines_verified: true, cd_fee: cdFee, net_proceeds: netProceeds })
+    .update({
+      fines_amount: result.finesAed,
+      fines_verified: true,
+      cd_fee: cdFee,
+      net_proceeds: netProceeds,
+      ...(finesScreenshotUrl ? { fines_screenshot_url: finesScreenshotUrl } : {}),
+    })
     .eq('id', deal.id)
     .select()
     .single();
@@ -469,6 +483,8 @@ async function extractMulkiya(req, res) {
   const result = await documentVision.extractMulkiya({ imageBase64, mediaType });
   if (!result.success) return res.status(422).json({ extracted: false, error: result.reason, reason: result.reason });
 
+  await supabaseAdmin.from('deals').update({ mulkiya_verified: true }).eq('id', deal.id);
+
   return res.json({ extracted: true, data: result.data });
 }
 
@@ -502,6 +518,8 @@ async function extractMulkiyaBack(req, res) {
 
   const result = await documentVision.extractMulkiyaBack({ imageBase64, mediaType });
   if (!result.success) return res.status(422).json({ extracted: false, error: result.reason, reason: result.reason });
+
+  await supabaseAdmin.from('deals').update({ mulkiya_back_verified: true }).eq('id', deal.id);
 
   return res.json({ extracted: true });
 }
@@ -537,6 +555,8 @@ async function extractSettlement(req, res) {
 
   const result = await documentVision.extractSettlementLetter({ imageBase64, mediaType });
   if (!result.success) return res.status(422).json({ extracted: false, error: result.reason, reason: result.reason });
+
+  await supabaseAdmin.from('deals').update({ settlement_verified: true }).eq('id', deal.id);
 
   return res.json({ extracted: true, data: result.data });
 }
@@ -575,6 +595,8 @@ async function extractBankProof(req, res) {
 
   const result = await bankProofVerification.verifyBankProof({ imageBase64, mediaType, expectedHolderName: seller?.full_name });
   if (!result.success) return res.status(422).json({ extracted: false, error: result.reason, reason: result.reason });
+
+  await supabaseAdmin.from('deals').update({ bank_proof_verified: true }).eq('id', deal.id);
 
   return res.json({
     extracted: true,

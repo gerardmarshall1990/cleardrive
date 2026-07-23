@@ -370,12 +370,19 @@ function DetailsCard({ deal, accent, onUpdate, onError }) {
   const [mulkiyaBackMsg, setMulkiyaBackMsg] = useState(null);
   const [settlementBusy, setSettlementBusy] = useState(false);
   const [settlementMsg, setSettlementMsg] = useState(null);
-  const [mulkiyaVerified, setMulkiyaVerified] = useState(false);
-  const [mulkiyaBackVerified, setMulkiyaBackVerified] = useState(false);
-  const [settlementVerified, setSettlementVerified] = useState(false);
+  // Initialized from the persisted deal record (see 0010_verified_flags.sql),
+  // not just `false` — previously these were purely ephemeral per-session
+  // React state, so a page refresh mid-Details-stage lost "already
+  // uploaded/verified" progress even though the underlying image was already
+  // saved, forcing a pointless re-upload. This also means an admin override
+  // of one of these flags (for a legitimate edge case Claude Vision keeps
+  // failing) now actually unblocks the seller on their next load.
+  const [mulkiyaVerified, setMulkiyaVerified] = useState(!!deal.mulkiya_verified);
+  const [mulkiyaBackVerified, setMulkiyaBackVerified] = useState(!!deal.mulkiya_back_verified);
+  const [settlementVerified, setSettlementVerified] = useState(!!deal.settlement_verified);
   const [bankProofBusy, setBankProofBusy] = useState(false);
   const [bankProofMsg, setBankProofMsg] = useState(null);
-  const [bankProofVerified, setBankProofVerified] = useState(false);
+  const [bankProofVerified, setBankProofVerified] = useState(!!deal.bank_proof_verified);
 
   function set(field) {
     return (e) => setForm((f) => ({ ...f, [field]: e.target.value }));

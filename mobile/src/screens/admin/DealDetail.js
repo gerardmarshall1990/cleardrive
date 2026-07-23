@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Linking } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Linking, Share, Alert as RNAlert } from 'react-native';
 import { DarkCard } from '../../components/Card';
 import { Button } from '../../components/Button';
 import { Input, Select } from '../../components/Input';
@@ -7,7 +7,7 @@ import { Badge, ProductBadge } from '../../components/Badge';
 import { ErrorBanner, SuccessBanner } from '../../components/Alert';
 import { ProgressSteps } from '../../components/ProgressSteps';
 import { SkeletonCard } from '../../components/Skeleton';
-import { STAGE_ORDER, STAGE_LABELS, stageIndex } from '../../lib/dealStages';
+import { STAGES, STAGE_ORDER, STAGE_LABELS, stageIndex } from '../../lib/dealStages';
 import { formatAed } from '../../lib/feeCalculator';
 import { api } from '../../lib/api';
 import { colors, fonts } from '../../theme/theme';
@@ -26,11 +26,25 @@ const OVERRIDE_FIELDS = [
   { key: 'fines_verified', label: 'Traffic fines verified' },
   { key: 'seller_kyc_complete', label: 'Seller KYC complete' },
   { key: 'buyer_kyc_complete', label: 'Buyer KYC complete' },
+  { key: 'mulkiya_verified', label: 'Mulkiya (front) verified' },
+  { key: 'mulkiya_back_verified', label: 'Mulkiya (back) verified' },
+  { key: 'settlement_verified', label: 'Bank settlement letter verified', loanOnly: true },
+  { key: 'bank_proof_verified', label: 'Proceeds account proof verified' },
   { key: 'doc001_signed', label: 'DOC-001 signed (Transaction & Escrow Agreement)' },
   { key: 'doc002_signed', label: 'DOC-002 signed (Limited Power of Attorney)' },
   { key: 'doc003_signed', label: 'DOC-003 signed (Referral Agreement)', requiresPartner: true },
   { key: 'funds_confirmed', label: 'Escrow funds confirmed received' },
 ];
+
+// Every stage the state machine knows about, including the terminal ones —
+// the normal PUT /:id/stage route only ever allows moving one step forward,
+// or to "cancelled" from a non-terminal stage, so there's no way to reopen a
+// cancelled deal, revert a stage, or un-complete a deal through it. Backs the
+// "Force stage" escape hatch below.
+const ALL_STAGES = [...STAGE_ORDER, STAGES.CANCELLED];
+
+// Mirrors backend's REFERRAL_SOURCES / the referral_source column comment.
+const REFERRAL_SOURCES = ['dealer', 'broker', 'dubizzle', 'facebook', 'direct'];
 
 const EMIRATES = ['Dubai', 'Abu Dhabi', 'Sharjah', 'Ajman', 'Ras Al Khaimah', 'Fujairah', 'Umm Al Quwain'];
 
@@ -65,13 +79,32 @@ export default function AdminDealDetail({ route }) {
   const [finesAmount, setFinesAmount] = useState('');
   const [transferCertUrl, setTransferCertUrl] = useState('');
   const [detailsForm, setDetailsForm] = useState(null);
+  const [links, setLinks] = useState(null);
+  const [auditLog, setAuditLog] = useState(null);
+  const [forceStageTarget, setForceStageTarget] = useState('');
+  const [forceStageReason, setForceStageReason] = useState('');
+  const [reassignRole, setReassignRole] = useState('buyer');
+  const [reassignPhone, setReassignPhone] = useState('');
+  const [identityRole, setIdentityRole] = useState('seller');
+  const [identityForm, setIdentityForm] = useState({ full_name: '', emirates_id: '', nationality: '', phone: '', email: '' });
+  const [receivedAmount, setReceivedAmount] = useState('');
+  const [referralPhone, setReferralPhone] = useState('');
+  const [referralSource, setReferralSource] = useState('direct');
+  const [referralFee, setReferralFee] = useState('');
 
   const load = useCallback(async () => {
     try {
-      const { deal } = await api.get(`/api/admin/deals/${id}`);
+      const { deal, links } = await api.get(`/api/admin/deals/${id}`);
       setDeal(deal);
+      setLinks(links);
     } catch (err) {
       setError(err.message);
+    }
+    try {
+      const { log } = await api.get(`/api/admin/deals/${id}/audit-log`);
+      setAuditLog(log);
+    } catch {
+      // Non-critical — the audit log is a diagnostic convenience, don't block the screen on it.
     }
   }, [id]);
 
@@ -139,6 +172,12 @@ export default function AdminDealDetail({ route }) {
       if (field === 'fines_verified' && !deal.fines_verified && finesAmount !== '') {
         body.finesAmount = Number(finesAmount);
       }
+      // Lets admin record what was actually received when manually confirming
+      // funds after a trustin_funds_mismatch (see Audit log below) — logged
+      // alongside the override for reconciliation, doesn't change sale_price.
+      if (field === 'funds_confirmed' && !deal.funds_confirmed && receivedAmount !== '') {
+        body.receivedAmount = Number(receivedAmount);
+      }
       const { deal: updated } = await api.put(`/api/admin/deals/${id}/override`, body);
       setDeal(updated);
       setSuccess('Updated');
@@ -166,6 +205,186 @@ export default function AdminDealDetail({ route }) {
     }
   }
 
+  async function submitForceStage() {
+    if (!forceStageTarget || !forceStageReason.trim()) return;
+    setSaving(true);
+    setError('');
+    setSuccess('');
+    try {
+      const { deal: updated, warning } = await api.put(`/api/admin/deals/${id}/force-stage`, {
+        targetStage: forceStageTarget,
+        reason: forceStageReason,
+      });
+      setDeal(updated);
+      setDetailsForm(null);
+      setForceStageTarget('');
+      setForceStageReason('');
+      setSuccess(`Stage force-set to "${STAGE_LABELS[updated.status] || updated.status}"`);
+      if (warning) setError(warning);
+      load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function cancelDeal() {
+    RNAlert.alert('Cancel deal', `Cancel deal ${deal.ref}? This can be reversed later using "Force stage" if needed.`, [
+      { text: 'Back', style: 'cancel' },
+      {
+        text: 'Cancel deal',
+        style: 'destructive',
+        onPress: async () => {
+          setSaving(true);
+          setError('');
+          setSuccess('');
+          try {
+            const { deal: updated } = await api.put(`/api/deals/${id}/stage`, { targetStage: 'cancelled' });
+            setDeal(updated);
+            setSuccess('Deal cancelled');
+            load();
+          } catch (err) {
+            setError(err.message);
+          } finally {
+            setSaving(false);
+          }
+        },
+      },
+    ]);
+  }
+
+  async function submitReassign() {
+    if (!reassignPhone.trim()) return;
+    setSaving(true);
+    setError('');
+    setSuccess('');
+    try {
+      const { deal: updated, documentsRegenerated, warning } = await api.put(`/api/admin/deals/${id}/reassign`, {
+        role: reassignRole,
+        phone: reassignPhone.trim(),
+      });
+      setDeal(updated);
+      setDetailsForm(null);
+      setReassignPhone('');
+      setSuccess(
+        documentsRegenerated?.length > 0
+          ? `${reassignRole === 'seller' ? 'Seller' : 'Buyer'} reassigned. Regenerated and re-sent for signature: ${documentsRegenerated.join(', ')}.`
+          : `${reassignRole === 'seller' ? 'Seller' : 'Buyer'} reassigned.`
+      );
+      if (warning) setError(warning);
+      load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function submitIdentity() {
+    const body = {};
+    for (const [k, v] of Object.entries(identityForm)) {
+      if (v.trim()) body[k] = v.trim();
+    }
+    if (Object.keys(body).length === 0) return;
+    setSaving(true);
+    setError('');
+    setSuccess('');
+    try {
+      const { documentsRegenerated, warning } = await api.put(`/api/admin/deals/${id}/party/${identityRole}/identity`, body);
+      setIdentityForm({ full_name: '', emirates_id: '', nationality: '', phone: '', email: '' });
+      setSuccess(
+        documentsRegenerated?.length > 0
+          ? `${identityRole === 'seller' ? 'Seller' : 'Buyer'} identity updated. Regenerated and re-sent for signature: ${documentsRegenerated.join(', ')}.`
+          : `${identityRole === 'seller' ? 'Seller' : 'Buyer'} identity updated.`
+      );
+      if (warning) setError(warning);
+      load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function resendInvite(doc) {
+    setSaving(true);
+    setError('');
+    setSuccess('');
+    try {
+      const { regenerated, warning } = await api.post(`/api/admin/deals/${id}/resend-signing-invite`, { doc });
+      setSuccess(`Re-sent for signature: ${regenerated.join(', ')}.`);
+      if (warning) setError(warning);
+      load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function submitReferral() {
+    const body = {};
+    if (referralPhone.trim()) body.partnerPhone = referralPhone.trim();
+    if (referralSource) body.referralSource = referralSource;
+    if (referralFee !== '') body.referralFee = Number(referralFee);
+    if (Object.keys(body).length === 0) return;
+    setSaving(true);
+    setError('');
+    setSuccess('');
+    try {
+      const { deal: updated, documentsRegenerated, warning } = await api.put(`/api/admin/deals/${id}/referral`, body);
+      setDeal(updated);
+      setReferralPhone('');
+      setReferralFee('');
+      setSuccess(
+        documentsRegenerated?.length > 0
+          ? `Referral info updated. Regenerated and re-sent for signature: ${documentsRegenerated.join(', ')}.`
+          : 'Referral info updated.'
+      );
+      if (warning) setError(warning);
+      load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function removeReferralPartner() {
+    RNAlert.alert('Remove referral partner', 'Remove the referral partner from this deal? Any DOC-003 already generated will be cleared.', [
+      { text: 'Back', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: async () => {
+          setSaving(true);
+          setError('');
+          setSuccess('');
+          try {
+            const { deal: updated, warning } = await api.put(`/api/admin/deals/${id}/referral`, { partnerPhone: '' });
+            setDeal(updated);
+            setSuccess('Referral partner removed.');
+            if (warning) setError(warning);
+            load();
+          } catch (err) {
+            setError(err.message);
+          } finally {
+            setSaving(false);
+          }
+        },
+      },
+    ]);
+  }
+
+  async function shareLink(link) {
+    try {
+      await Share.share({ message: link });
+    } catch {
+      setError('Could not open share sheet — copy the link manually');
+    }
+  }
+
   if (!deal) {
     return (
       <ScrollView style={{ backgroundColor: colors.navy }} contentContainerStyle={styles.wrap}>
@@ -183,6 +402,11 @@ export default function AdminDealDetail({ route }) {
         <Text style={styles.ref}>{deal.ref}</Text>
         <ProductBadge product={deal.product} />
         {deal.stuck && <Badge variant="error">Stuck</Badge>}
+        {deal.status !== 'complete' && deal.status !== 'cancelled' && (
+          <Button variant="secondary" loading={saving} onPress={cancelDeal} style={styles.headerBtn}>
+            Cancel deal
+          </Button>
+        )}
       </View>
       {vehicleTitle(deal) ? (
         <Text style={styles.plate}>{vehicleTitle(deal)} · {deal.plate}</Text>
@@ -302,7 +526,7 @@ export default function AdminDealDetail({ route }) {
         <Text style={styles.cardTitle}>Manual overrides</Text>
         <Text style={[styles.cardBody, { marginBottom: 12 }]}>Use only for edge cases — e.g. a signature or ID check collected outside the platform.</Text>
         <View style={{ gap: 10 }}>
-          {OVERRIDE_FIELDS.filter((f) => !f.requiresPartner || deal.referral_partner_id).map((f) => (
+          {OVERRIDE_FIELDS.filter((f) => (!f.requiresPartner || deal.referral_partner_id) && (!f.loanOnly || deal.product === 'loanclear')).map((f) => (
             <View key={f.key} style={styles.overrideItem}>
               <View style={styles.overrideRow}>
                 <Text style={styles.overrideLabel}>{f.label}</Text>
@@ -321,6 +545,15 @@ export default function AdminDealDetail({ route }) {
                   keyboardType="numeric"
                   value={finesAmount}
                   onChangeText={setFinesAmount}
+                  style={{ marginTop: 12 }}
+                />
+              )}
+              {f.key === 'funds_confirmed' && !deal.funds_confirmed && (
+                <Input
+                  label={`Amount actually received (AED) — optional, to reconcile a mismatch (expected ${formatAed(deal.sale_price)})`}
+                  keyboardType="numeric"
+                  value={receivedAmount}
+                  onChangeText={setReceivedAmount}
                   style={{ marginTop: 12 }}
                 />
               )}
@@ -351,10 +584,189 @@ export default function AdminDealDetail({ route }) {
         )}
       </DarkCard>
 
+      {links && Object.values(links).some(Boolean) && (
+        <DarkCard style={{ marginTop: 12 }}>
+          <Text style={styles.cardTitle}>Links (manual share)</Text>
+          <Text style={[styles.cardBody, { marginBottom: 12 }]}>
+            WhatsApp delivery is mocked in this environment — share these manually until it's live.
+          </Text>
+          <View style={{ gap: 8 }}>
+            {links.join && <LinkRow label="Join link" link={links.join} onShare={shareLink} />}
+            {links.kycSeller && <LinkRow label="Seller KYC link" link={links.kycSeller} onShare={shareLink} />}
+            {links.kycBuyer && <LinkRow label="Buyer KYC link" link={links.kycBuyer} onShare={shareLink} />}
+            {links.signingSeller && <LinkRow label="Seller signing link" link={links.signingSeller} onShare={shareLink} />}
+            {links.signingBuyer && <LinkRow label="Buyer signing link" link={links.signingBuyer} onShare={shareLink} />}
+          </View>
+        </DarkCard>
+      )}
+
+      {(deal.doc001_url || deal.doc002_url) && (
+        <DarkCard style={{ marginTop: 12 }}>
+          <Text style={styles.cardTitle}>Resend signing invite</Text>
+          <Text style={[styles.cardBody, { marginBottom: 12 }]}>
+            Regenerates the document fresh and re-sends it via SignNow — use if a party says they never received it, or the original upload failed.
+          </Text>
+          <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+            {deal.doc001_url && (
+              <Button variant="secondary" loading={saving} onPress={() => resendInvite('doc001')} style={styles.overrideBtn}>
+                Resend DOC-001
+              </Button>
+            )}
+            {deal.doc002_url && (
+              <Button variant="secondary" loading={saving} onPress={() => resendInvite('doc002')} style={styles.overrideBtn}>
+                Resend DOC-002
+              </Button>
+            )}
+          </View>
+        </DarkCard>
+      )}
+
+      <DarkCard style={{ marginTop: 12 }}>
+        <Text style={styles.cardTitle}>Reassign seller/buyer</Text>
+        <Text style={[styles.cardBody, { marginBottom: 12 }]}>
+          Use if the wrong person was attached. Any KYC/signature already collected under the old identity is reset — it doesn't represent the
+          actual party anymore.
+        </Text>
+        <View style={{ gap: 10 }}>
+          <Select label="Role" selectedValue={reassignRole} onValueChange={setReassignRole}>
+            <Select.Item label="Seller" value="seller" />
+            <Select.Item label="Buyer" value="buyer" />
+          </Select>
+          <Input label="New phone number" value={reassignPhone} onChangeText={setReassignPhone} placeholder="+9715..." />
+          <Button variant={accent} loading={saving} onPress={submitReassign}>
+            Reassign
+          </Button>
+        </View>
+      </DarkCard>
+
+      <DarkCard style={{ marginTop: 12 }}>
+        <Text style={styles.cardTitle}>Correct seller/buyer identity</Text>
+        <Text style={[styles.cardBody, { marginBottom: 12 }]}>
+          Fixes a KYC misread name/Emirates ID/nationality, or a typo'd phone/email. These fields print on DOC-001/DOC-002 — correcting them
+          regenerates and re-sends any document already generated.
+        </Text>
+        <View style={{ gap: 10 }}>
+          <Select label="Party" selectedValue={identityRole} onValueChange={setIdentityRole}>
+            <Select.Item label="Seller" value="seller" />
+            <Select.Item label="Buyer" value="buyer" />
+          </Select>
+          <Input label="Full name" value={identityForm.full_name} onChangeText={(v) => setIdentityForm((f) => ({ ...f, full_name: v }))} />
+          <Input label="Emirates ID" value={identityForm.emirates_id} onChangeText={(v) => setIdentityForm((f) => ({ ...f, emirates_id: v }))} />
+          <Input label="Nationality" value={identityForm.nationality} onChangeText={(v) => setIdentityForm((f) => ({ ...f, nationality: v }))} />
+          <Input label="Phone" value={identityForm.phone} onChangeText={(v) => setIdentityForm((f) => ({ ...f, phone: v }))} />
+          <Input label="Email" value={identityForm.email} onChangeText={(v) => setIdentityForm((f) => ({ ...f, email: v }))} />
+          <Button variant={accent} loading={saving} onPress={submitIdentity}>
+            Save identity correction
+          </Button>
+        </View>
+      </DarkCard>
+
+      <DarkCard style={{ marginTop: 12 }}>
+        <Text style={styles.cardTitle}>Referral partner</Text>
+        <Text style={[styles.cardBody, { marginBottom: 12 }]}>
+          Attach, correct, or remove the dealer/broker who referred this deal — sellers often only mention this after the deal has already
+          started, or the wrong one gets entered. Attaching/changing a partner on a deal that already has DOC-001 generates DOC-003 (or
+          regenerates it if a fee override is also saved) and sends it for signature.
+        </Text>
+        <View style={styles.overrideItem}>
+          <Row label="Partner ID" value={deal.referral_partner_id ? deal.referral_partner_id.slice(0, 8) : 'None attached'} mono />
+          <Row label="Source" value={deal.referral_source || '—'} />
+          <Row label="Referral fee" value={deal.referral_fee ? formatAed(deal.referral_fee) : '—'} />
+          <Row label="Fee paid" value={deal.referral_fee_paid ? 'Yes' : 'No'} />
+          {deal.referral_partner_id && (
+            <Button variant="secondary" loading={saving} onPress={removeReferralPartner} style={[styles.overrideBtn, { marginTop: 8 }]}>
+              Remove referral partner
+            </Button>
+          )}
+        </View>
+        <View style={{ gap: 10, marginTop: 12 }}>
+          <Input
+            label="Partner phone (attach or change)"
+            value={referralPhone}
+            onChangeText={setReferralPhone}
+            placeholder="+9715... — leave blank to only change source/fee"
+          />
+          <Select label="Referral source" selectedValue={referralSource} onValueChange={setReferralSource}>
+            {REFERRAL_SOURCES.map((s) => (
+              <Select.Item key={s} label={s} value={s} />
+            ))}
+          </Select>
+          <Input
+            label="Referral fee override (AED) — optional"
+            keyboardType="numeric"
+            value={referralFee}
+            onChangeText={setReferralFee}
+          />
+          <Button variant={accent} loading={saving} onPress={submitReferral}>
+            Save referral info
+          </Button>
+        </View>
+      </DarkCard>
+
+      <DarkCard style={[styles.blockedCard, { marginTop: 12 }]}>
+        <Text style={styles.cardTitle}>Force stage (advanced)</Text>
+        <Text style={[styles.cardBody, { marginBottom: 12 }]}>
+          Bypasses the normal forward-only flow — the only way to reopen a cancelled deal, revert a stage, or un-complete a deal. Does NOT
+          re-trigger automation for the new stage (no WhatsApp, no document generation, no TrustIn/escrow calls) — use the tools above afterwards
+          if the new stage needs any of that.
+        </Text>
+        <View style={{ gap: 10 }}>
+          <Select label="Target stage" selectedValue={forceStageTarget} onValueChange={setForceStageTarget}>
+            <Select.Item label="Select a stage…" value="" />
+            {ALL_STAGES.map((s) => (
+              <Select.Item key={s} label={STAGE_LABELS[s] || s} value={s} />
+            ))}
+          </Select>
+          <Input
+            label="Reason (required, for the audit log)"
+            value={forceStageReason}
+            onChangeText={setForceStageReason}
+            placeholder="e.g. cancelled by mistake, both parties want to resume"
+          />
+          <Button variant="secondary" loading={saving} onPress={submitForceStage} disabled={!forceStageTarget || !forceStageReason.trim()}>
+            Force stage change
+          </Button>
+        </View>
+      </DarkCard>
+
+      {auditLog?.length > 0 && (
+        <DarkCard style={{ marginTop: 12 }}>
+          <Text style={styles.cardTitle}>Audit log</Text>
+          <View style={{ gap: 8 }}>
+            {auditLog.map((entry) => (
+              <View key={entry.id} style={styles.overrideItem}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                  <Text style={[styles.overrideLabel, { flex: 0, fontWeight: 'bold' }]}>{entry.action}</Text>
+                  <Text style={{ color: entry.status === 'failed' ? colors.error : colors.white40, fontSize: 11 }}>{entry.status}</Text>
+                </View>
+                <Text style={{ color: colors.white40, fontSize: 11, marginTop: 2 }}>{new Date(entry.created_at).toLocaleString('en-AE')}</Text>
+                {entry.payload && <Text style={{ color: colors.white50, fontSize: 11, marginTop: 4 }}>{JSON.stringify(entry.payload)}</Text>}
+              </View>
+            ))}
+          </View>
+        </DarkCard>
+      )}
+
       <View style={{ marginTop: 24 }}>
         <Timeline currentStage={deal.status} />
       </View>
     </ScrollView>
+  );
+}
+
+function LinkRow({ label, link, onShare }) {
+  return (
+    <View style={[styles.overrideItem, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }]}>
+      <View style={{ flex: 1 }}>
+        <Text style={{ color: colors.white40, fontSize: 10 }}>{label}</Text>
+        <Text style={{ color: colors.white70, fontSize: 12, fontFamily: 'monospace' }} numberOfLines={1}>
+          {link}
+        </Text>
+      </View>
+      <Button variant="secondary" onPress={() => onShare(link)} style={styles.overrideBtn}>
+        Share
+      </Button>
+    </View>
   );
 }
 
@@ -387,6 +799,7 @@ function Timeline({ currentStage }) {
 const styles = StyleSheet.create({
   wrap: { padding: 16, paddingBottom: 48 },
   headRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  headerBtn: { marginLeft: 'auto', paddingVertical: 6, paddingHorizontal: 12 },
   ref: { fontFamily: fonts.display, fontSize: 20, fontWeight: 'bold', color: colors.white },
   plate: { fontFamily: fonts.sans, fontSize: 13, color: colors.white40, marginBottom: 8 },
   cardTitle: { fontFamily: fonts.display, fontSize: 15, color: colors.white, marginBottom: 8 },

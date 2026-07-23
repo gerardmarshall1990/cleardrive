@@ -543,16 +543,22 @@ function DetailsCard({ deal, accent, onUpdate, onError }) {
   const [loading, setLoading] = useState(false);
   const [mulkiyaBusy, setMulkiyaBusy] = useState(false);
   const [mulkiyaMsg, setMulkiyaMsg] = useState(null);
-  const [mulkiyaVerified, setMulkiyaVerified] = useState(false);
+  // Initialized from the persisted deal record (see 0010_verified_flags.sql),
+  // not just `false` — previously these were purely ephemeral per-session
+  // state, so a screen reload mid-Details-stage lost "already
+  // uploaded/verified" progress even though the underlying image was already
+  // saved, forcing a pointless re-upload. Also means an admin override of one
+  // of these flags now actually unblocks the seller on their next load.
+  const [mulkiyaVerified, setMulkiyaVerified] = useState(!!deal.mulkiya_verified);
   const [mulkiyaBackBusy, setMulkiyaBackBusy] = useState(false);
   const [mulkiyaBackMsg, setMulkiyaBackMsg] = useState(null);
-  const [mulkiyaBackVerified, setMulkiyaBackVerified] = useState(false);
+  const [mulkiyaBackVerified, setMulkiyaBackVerified] = useState(!!deal.mulkiya_back_verified);
   const [settlementBusy, setSettlementBusy] = useState(false);
   const [settlementMsg, setSettlementMsg] = useState(null);
-  const [settlementVerified, setSettlementVerified] = useState(false);
+  const [settlementVerified, setSettlementVerified] = useState(!!deal.settlement_verified);
   const [bankProofBusy, setBankProofBusy] = useState(false);
   const [bankProofMsg, setBankProofMsg] = useState(null);
-  const [bankProofVerified, setBankProofVerified] = useState(false);
+  const [bankProofVerified, setBankProofVerified] = useState(!!deal.bank_proof_verified);
 
   function set(field, value) {
     setForm((f) => ({ ...f, [field]: value }));

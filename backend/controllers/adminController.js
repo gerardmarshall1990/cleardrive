@@ -8,6 +8,7 @@ const feeCalculator = require('../services/feeCalculator');
 const docGen = require('../services/documentGenerator');
 const signNow = require('../services/signNowService');
 const logger = require('../utils/logger');
+const { APP_BASE_URL } = require('../config/appBaseUrl');
 
 // Boolean fields an admin may manually flip while TrustIn KYC / SignNow signing
 // aren't yet live integrations, or a third-party automation (Claude Vision fines
@@ -24,6 +25,14 @@ const OVERRIDABLE_FIELDS = [
   'funds_confirmed',
   'loan_cleared',
   'fines_cleared',
+  // Mirror fines_verified's override lever for the other three Claude Vision
+  // upload checks (see 0010_verified_flags.sql) — none of these had any admin
+  // unblock before, so a legitimate edge case (genuinely faded Mulkiya, a
+  // bank statement with a valid-but-differently-formatted name) had no remedy.
+  'mulkiya_verified',
+  'mulkiya_back_verified',
+  'settlement_verified',
+  'bank_proof_verified',
 ];
 
 // Vehicle/financial fields admin may manually correct — mirrors
@@ -50,6 +59,22 @@ const ADMIN_DETAIL_FIELDS = [
   'seller_acc_name',
   'seller_proc_bank',
 ];
+
+// Identity fields on the `users` table an admin may correct for a deal's
+// seller/buyer — e.g. a KYC-time misread name, or a typo'd phone/email that
+// then breaks WhatsApp/SignNow delivery. `full_name`/`emirates_id`/`phone`
+// print verbatim on DOC-001 for either party; `nationality` additionally
+// prints on DOC-002 but only for the seller (see documentGenerator.js).
+// `email` prints on neither doc — it only feeds the SignNow invite address.
+const USER_IDENTITY_FIELDS = ['full_name', 'emirates_id', 'nationality', 'phone', 'email'];
+const IDENTITY_FIELDS_ON_DOC001 = ['full_name', 'emirates_id', 'phone'];
+const IDENTITY_FIELDS_ON_DOC002_SELLER_ONLY = ['full_name', 'emirates_id', 'nationality', 'phone'];
+
+// Mirrors the referral_source column comment in 0001_init.sql. A seller often
+// only mentions/remembers the dealer or broker who referred them after the
+// deal has already started (or the wrong one was entered) — admin needs to be
+// able to attach/correct/remove this mid-deal, not just at creation time.
+const REFERRAL_SOURCES = ['dealer', 'broker', 'dubizzle', 'facebook', 'direct'];
 
 // Human-readable descriptions of every field the deal-flow state machine
 // requires to leave a stage — used to tell admin exactly *why* a deal is stuck,
@@ -108,12 +133,12 @@ const DOC002_FIELDS = ['plate', 'vin', 'make', 'model', 'year', 'loan_bank'];
  *
  * @returns {Promise<{regenerated: string[], warning: string|null}>}
  */
-async function regenerateAffectedDocuments(deal, changedFields, adminId) {
+async function regenerateAffectedDocuments(deal, changedFields, adminId, force = {}) {
   const regenerated = [];
   const docUpdates = {};
 
-  const needsDoc001 = deal.doc001_url && changedFields.some((f) => DOC001_FIELDS.includes(f));
-  const needsDoc002 = deal.doc002_url && changedFields.some((f) => DOC002_FIELDS.includes(f));
+  const needsDoc001 = deal.doc001_url && (force.doc001 || changedFields.some((f) => DOC001_FIELDS.includes(f)));
+  const needsDoc002 = deal.doc002_url && (force.doc002 || changedFields.some((f) => DOC002_FIELDS.includes(f)));
 
   if (!needsDoc001 && !needsDoc002) return { regenerated, warning: null };
 
@@ -224,7 +249,19 @@ async function getDealDetail(req, res) {
   const now = Date.now();
   const stuck = ![STAGES.COMPLETE, STAGES.CANCELLED].includes(deal.status) && now - new Date(deal.updated_at).getTime() > STUCK_THRESHOLD_MS;
 
-  return res.json({ deal: { ...deal, stuck, blockedOn: diagnoseBlockers(deal) } });
+  // Stable, deterministic links (mirrors dealFlowEngine.onEnterStage's own
+  // link construction) surfaced for manual copy/send — important right now
+  // since WHATSAPP_MOCK_MODE means the automated WhatsApp messages carrying
+  // these same links don't actually deliver to anyone yet.
+  const links = {
+    join: !deal.seller_id || !deal.buyer_id ? `${APP_BASE_URL}/join/${deal.id}/${!deal.seller_id ? 'seller' : 'buyer'}` : null,
+    kycSeller: deal.seller_id && !deal.seller_kyc_complete ? `${APP_BASE_URL}/kyc/${deal.id}/seller` : null,
+    kycBuyer: deal.buyer_id && !deal.buyer_kyc_complete ? `${APP_BASE_URL}/kyc/${deal.id}/buyer` : null,
+    signingSeller: deal.doc001_url && !deal.doc001_signed ? `${APP_BASE_URL}/sign/${deal.id}/seller` : null,
+    signingBuyer: deal.doc001_url && !deal.doc001_signed ? `${APP_BASE_URL}/sign/${deal.id}/buyer` : null,
+  };
+
+  return res.json({ deal: { ...deal, stuck, blockedOn: diagnoseBlockers(deal) }, links });
 }
 
 /** GET /api/admin/stats — today's deals, active deals, revenue today/month. */
@@ -319,11 +356,19 @@ async function manualOverride(req, res) {
   if (error || !updated) return res.status(404).json({ error: 'Deal not found' });
 
   logger.info(`Admin manual override on deal ${updated.ref}`, { updates, admin: req.appUser?.id });
+  // When admin manually confirms funds_confirmed after a trustin_funds_mismatch
+  // (buyer's transfer didn't match sale_price — see trustInWebhook.handleFundsReceived,
+  // which otherwise leaves the deal silently stuck forever with no admin-facing
+  // signal beyond a raw automation_log row), let them record what was actually
+  // received for reconciliation. No schema change: logged alongside the override
+  // itself, same place the original mismatch was logged, so both are visible together.
+  const receivedAmountNote =
+    updates.funds_confirmed === true && req.body.receivedAmount !== undefined ? { receivedAmount: Number(req.body.receivedAmount) || 0, expected: deal.sale_price } : null;
   await supabaseAdmin.from('automation_log').insert({
     deal_id: updated.id,
     action: 'admin_manual_override',
     status: 'sent',
-    payload: { updates, adminId: req.appUser?.id },
+    payload: { updates, adminId: req.appUser?.id, ...(receivedAmountNote ? { receivedAmountReconciliation: receivedAmountNote } : {}) },
   });
 
   // A corrected vehicle/financial field may already be printed on a generated
@@ -361,4 +406,400 @@ async function refetchDocFields(dealId) {
   return data || {};
 }
 
-module.exports = { getAllDeals, getStats, getDealDetail, manualOverride };
+/**
+ * PUT /api/admin/deals/:id/force-stage — bypasses the normal forward-only
+ * state machine (dealStages.isValidTransition only permits moving one step
+ * forward, or to CANCELLED from any non-terminal stage — there is no way to
+ * reopen a cancelled deal, revert a stage, or un-complete a wrongly-completed
+ * deal through the regular PUT /:id/stage route). Admin-only escape hatch for
+ * exactly those cases (e.g. a deal was cancelled by mistake, or completed
+ * before the parties actually finished, or needs to go back a step to redo
+ * something).
+ *
+ * Deliberately does NOT re-run onEnterStage's stage-entry automation (no
+ * WhatsApp resend, no document (re)generation, no TrustIn/escrow calls) —
+ * replaying that automatically risks duplicate WhatsApp messages, a second
+ * TrustIn escrow deal being created, or double-charging/paying out. Admin
+ * must trigger any of those manually afterwards using the other admin tools
+ * (Regenerate documents, Resend signing invite, etc.) if the new stage needs them.
+ */
+async function forceStage(req, res) {
+  const { targetStage, reason } = req.body;
+  if (!targetStage || !Object.values(STAGES).includes(targetStage)) {
+    return res.status(400).json({ error: `targetStage must be one of: ${Object.values(STAGES).join(', ')}` });
+  }
+  if (!reason || !reason.trim()) {
+    return res.status(400).json({ error: 'A reason is required so this override is auditable' });
+  }
+
+  const { data: deal, error } = await supabaseAdmin.from('deals').select('*').eq('id', req.params.id).single();
+  if (error || !deal) return res.status(404).json({ error: 'Deal not found' });
+  if (deal.status === targetStage) return res.status(400).json({ error: 'Deal is already in that stage' });
+
+  const { data: updated, error: updateErr } = await supabaseAdmin.from('deals').update({ status: targetStage }).eq('id', deal.id).select().single();
+  if (updateErr || !updated) return res.status(500).json({ error: 'Could not change stage — please try again' });
+
+  logger.info(`Admin force-set deal ${updated.ref} from ${deal.status} to ${targetStage}`, { reason, admin: req.appUser?.id });
+  await supabaseAdmin.from('automation_log').insert({
+    deal_id: updated.id,
+    action: 'admin_force_stage',
+    status: 'sent',
+    payload: { from: deal.status, to: targetStage, reason, adminId: req.appUser?.id },
+  });
+
+  return res.json({
+    deal: updated,
+    warning:
+      'Stage was force-set directly — no automated actions for the new stage were re-triggered (no WhatsApp messages, document generation, or TrustIn/escrow calls). ' +
+      'Trigger any of those manually if the new stage needs them.',
+  });
+}
+
+/**
+ * PUT /api/admin/deals/:id/reassign — replaces the seller or buyer on a deal
+ * by phone lookup. The seller-facing PATCH /:id/buyer endpoint already lets a
+ * seller attach/replace a buyer, but does zero cleanup of the previously
+ * attached party's state — if a seller attached the wrong buyer who then
+ * completed KYC or even signed DOC-001, re-attaching the correct buyer would
+ * silently leave those flags true for someone who never actually did any of
+ * it. This admin version resets seller/buyer_kyc_complete and any signed
+ * document status tied to the replaced party, and regenerates already-
+ * generated DOC-001/002 (they printed the wrong party's name).
+ */
+async function reassignParty(req, res) {
+  const { role, phone } = req.body;
+  if (!['seller', 'buyer'].includes(role)) return res.status(400).json({ error: 'role must be "seller" or "buyer"' });
+  if (!phone) return res.status(400).json({ error: 'phone is required' });
+
+  const { data: deal, error } = await supabaseAdmin.from('deals').select('*').eq('id', req.params.id).single();
+  if (error || !deal) return res.status(404).json({ error: 'Deal not found' });
+
+  const { data: newUser } = await supabaseAdmin.from('users').select('id').eq('phone', phone).eq('role', 'individual').maybeSingle();
+  if (!newUser) return res.status(400).json({ error: 'No account found with that phone number — they must sign up first' });
+
+  const idField = role === 'seller' ? 'seller_id' : 'buyer_id';
+  const kycField = role === 'seller' ? 'seller_kyc_complete' : 'buyer_kyc_complete';
+  if (deal[idField] === newUser.id) return res.status(400).json({ error: `That is already the ${role} on this deal` });
+
+  const updates = { [idField]: newUser.id, [kycField]: false };
+  // Any signature already collected was collected under the wrong identity —
+  // it no longer represents the actual party and must be re-collected.
+  if (deal.doc001_url) {
+    updates.doc001_signed = false;
+    updates.doc001_signnow_id = null;
+  }
+  if (role === 'seller' && deal.doc002_url) {
+    updates.doc002_signed = false;
+    updates.doc002_signnow_id = null;
+  }
+
+  const { data: updated, error: updateErr } = await supabaseAdmin.from('deals').update(updates).eq('id', deal.id).select().single();
+  if (updateErr || !updated) return res.status(500).json({ error: 'Could not reassign — please try again' });
+
+  logger.info(`Admin reassigned ${role} on deal ${updated.ref}`, { oldId: deal[idField], newId: newUser.id, admin: req.appUser?.id });
+  await supabaseAdmin.from('automation_log').insert({
+    deal_id: updated.id,
+    action: 'admin_reassign_party',
+    status: 'sent',
+    payload: { role, oldId: deal[idField], newId: newUser.id, adminId: req.appUser?.id },
+  });
+
+  let documentsRegenerated = [];
+  let warning =
+    stageIndex(deal.status) >= stageIndex(STAGES.ESCROW)
+      ? 'This deal is already at or past Escrow — funds/loan/fines settlement may already be tied to the previous party. Reassigning does not undo any money movement; reconcile manually.'
+      : null;
+  try {
+    const result = await regenerateAffectedDocuments(updated, [], req.appUser?.id, {
+      doc001: !!deal.doc001_url,
+      doc002: role === 'seller' && !!deal.doc002_url,
+    });
+    documentsRegenerated = result.regenerated;
+    if (result.warning) warning = warning ? `${warning} ${result.warning}` : result.warning;
+  } catch (err) {
+    const msg = `Reassignment was saved, but document regeneration failed: ${err.message}.`;
+    warning = warning ? `${warning} ${msg}` : msg;
+  }
+
+  return res.json({
+    deal: documentsRegenerated.length > 0 ? { ...updated, ...(await refetchDocFields(updated.id)) } : updated,
+    documentsRegenerated,
+    warning,
+  });
+}
+
+/**
+ * PUT /api/admin/deals/:id/party/:role/identity — corrects a seller or
+ * buyer's identity fields on the `users` table (full_name, emirates_id,
+ * nationality, phone, email). Before this, there was no admin path to fix any
+ * of these once TrustIn/UAE-Pass KYC populated them — a misread name has real
+ * consequences: it prints on DOC-001/002 and drives the bank-proof
+ * fuzzy-name-match (bankProofVerificationService.js), so a KYC typo could
+ * permanently block a seller from passing bank-proof verification with no
+ * remedy. Regenerates DOC-001/002 for THIS deal if they already print the
+ * changed field(s) and were already generated.
+ */
+async function updatePartyIdentity(req, res) {
+  const { role } = req.params;
+  if (!['seller', 'buyer'].includes(role)) return res.status(400).json({ error: 'role must be "seller" or "buyer"' });
+
+  const { data: deal, error } = await supabaseAdmin.from('deals').select('*').eq('id', req.params.id).single();
+  if (error || !deal) return res.status(404).json({ error: 'Deal not found' });
+
+  const userId = role === 'seller' ? deal.seller_id : deal.buyer_id;
+  if (!userId) return res.status(400).json({ error: `No ${role} attached to this deal yet` });
+
+  const updates = {};
+  for (const field of USER_IDENTITY_FIELDS) {
+    if (req.body[field] !== undefined) updates[field] = req.body[field];
+  }
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: `No valid fields provided. Allowed: ${USER_IDENTITY_FIELDS.join(', ')}` });
+  }
+
+  const { data: updatedUser, error: updateErr } = await supabaseAdmin.from('users').update(updates).eq('id', userId).select().single();
+  if (updateErr || !updatedUser) return res.status(500).json({ error: 'Could not save identity fields — please try again' });
+
+  logger.info(`Admin corrected ${role} identity on deal ${deal.ref}`, { updates, admin: req.appUser?.id });
+  await supabaseAdmin.from('automation_log').insert({
+    deal_id: deal.id,
+    action: 'admin_identity_override',
+    status: 'sent',
+    payload: { role, updates, adminId: req.appUser?.id },
+  });
+
+  const changedFields = Object.keys(updates);
+  const printedOnDoc001 = changedFields.some((f) => IDENTITY_FIELDS_ON_DOC001.includes(f));
+  const printedOnDoc002 = role === 'seller' && changedFields.some((f) => IDENTITY_FIELDS_ON_DOC002_SELLER_ONLY.includes(f));
+
+  let documentsRegenerated = [];
+  let warning = null;
+  if (printedOnDoc001 || printedOnDoc002) {
+    try {
+      const result = await regenerateAffectedDocuments(deal, [], req.appUser?.id, {
+        doc001: printedOnDoc001 && !!deal.doc001_url,
+        doc002: printedOnDoc002 && !!deal.doc002_url,
+      });
+      documentsRegenerated = result.regenerated;
+      warning = result.warning;
+    } catch (err) {
+      warning = `Identity fields were saved, but document regeneration failed: ${err.message}.`;
+    }
+  }
+
+  return res.json({
+    user: updatedUser,
+    deal: documentsRegenerated.length > 0 ? { ...deal, ...(await refetchDocFields(deal.id)) } : undefined,
+    documentsRegenerated,
+    warning,
+  });
+}
+
+/**
+ * POST /api/admin/deals/:id/resend-signing-invite — standalone re-dispatch of
+ * a specific already-generated document to SignNow, decoupled from requiring
+ * a field edit to trigger it (previously the only way to re-send a signing
+ * invite was via manualOverride's side-effect regeneration when a printed
+ * field happened to change). Covers e.g. "the seller says they never got the
+ * SignNow email" or "the SignNow upload failed silently the first time" — both
+ * currently unrecoverable without this. Regenerates the PDF fresh (guarantees
+ * an up-to-date document and a fresh SignNow document ID) and resends.
+ */
+async function resendSigningInvite(req, res) {
+  const { doc } = req.body;
+  if (!['doc001', 'doc002'].includes(doc)) return res.status(400).json({ error: 'doc must be "doc001" or "doc002"' });
+
+  const { data: deal, error } = await supabaseAdmin.from('deals').select('*').eq('id', req.params.id).single();
+  if (error || !deal) return res.status(404).json({ error: 'Deal not found' });
+  if (!deal[`${doc}_url`]) {
+    return res.status(400).json({ error: `${doc.toUpperCase()} has not been generated yet — use "Regenerate documents" first` });
+  }
+
+  try {
+    const result = await regenerateAffectedDocuments(deal, [], req.appUser?.id, { doc001: doc === 'doc001', doc002: doc === 'doc002' });
+    return res.json({ regenerated: result.regenerated, warning: result.warning });
+  } catch (err) {
+    return res.status(500).json({ error: `Could not resend signing invite: ${err.message}` });
+  }
+}
+
+/**
+ * Generates DOC-003 (Broker Referral Agreement) fresh and (best-effort)
+ * uploads + sends it to the partner for signature. Shared by updateReferral
+ * for both the "newly attached partner" and "existing partner's fee/identity
+ * changed" cases below.
+ */
+async function generateAndSendDoc003(deal, partner) {
+  const doc003 = await docGen.generateDoc003(deal, partner);
+  const updates = { doc003_url: doc003.url, doc003_signed: false, doc003_signnow_id: null };
+  try {
+    const doc003Id = await signNow.uploadDocument(doc003.filePath);
+    updates.doc003_signnow_id = doc003Id;
+    await signNow.sendSigningInvite(doc003Id, [{ email: partner.email, role: 'Partner', order: 1 }]);
+  } catch (err) {
+    logger.warn('SignNow re-upload/invite skipped or failed for regenerated DOC-003', { dealRef: deal.ref, error: err.message });
+  }
+  await supabaseAdmin.from('deals').update(updates).eq('id', deal.id);
+  return updates;
+}
+
+/**
+ * PUT /api/admin/deals/:id/referral — attaches, corrects, or removes the
+ * referral partner/source/fee on a deal after it's already been created. A
+ * seller very often only mentions the dealer/broker who referred them once
+ * the deal is already underway (or names the wrong one, or the fee needs a
+ * manual adjustment) — before this there was no way to fix any of that once
+ * POST /deals had already run, since referral_partner_id/referral_source/
+ * referral_fee were only ever set once, at creation.
+ *
+ * Body: { partnerPhone, referralSource, referralFee }, all optional —
+ *  - partnerPhone: looks up an existing partners row by phone and attaches it.
+ *    Pass an empty string/null to remove the currently attached partner.
+ *  - referralSource: one of REFERRAL_SOURCES.
+ *  - referralFee: explicit override of the auto-calculated referral fee
+ *    (e.g. a custom negotiated amount) — takes precedence over the
+ *    auto-calculation triggered by attaching a partner in the same request.
+ *
+ * If a partner is newly attached to a deal whose DOC-001 already exists but
+ * DOC-003 does not (no partner existed when documents were first generated),
+ * generates + sends DOC-003 now. If a partner/fee changes on a deal that
+ * already has a DOC-003, regenerates and re-sends it so the printed
+ * partner/fee is correct and it's re-signed. If the partner is removed,
+ * doc003Required becomes false (see dealFlowEngine.checkAndAdvanceIfAllSigned)
+ * so an unsigned/orphaned DOC-003 no longer blocks the deal from advancing —
+ * the stale doc003_url/signed state is cleared since it no longer applies.
+ */
+async function updateReferral(req, res) {
+  const { data: deal, error } = await supabaseAdmin.from('deals').select('*').eq('id', req.params.id).single();
+  if (error || !deal) return res.status(404).json({ error: 'Deal not found' });
+
+  const updates = {};
+  let newPartner = null;
+  let partnerRemoved = false;
+
+  if ('partnerPhone' in req.body) {
+    const phone = req.body.partnerPhone;
+    if (!phone || !String(phone).trim()) {
+      partnerRemoved = Boolean(deal.referral_partner_id);
+      updates.referral_partner_id = null;
+      updates.referral_fee = null;
+      if (deal.doc003_url) {
+        updates.doc003_url = null;
+        updates.doc003_signed = false;
+        updates.doc003_signnow_id = null;
+      }
+    } else {
+      const { data: partner } = await supabaseAdmin.from('partners').select('*').eq('phone', String(phone).trim()).maybeSingle();
+      if (!partner) return res.status(400).json({ error: 'No partner found with that phone number — they must create a partner profile first (POST /api/partners)' });
+      newPartner = partner;
+      updates.referral_partner_id = partner.id;
+      const dealValue = deal.product === 'loanclear' ? deal.loan_amount || 0 : deal.sale_price;
+      updates.referral_fee = feeCalculator.calculateReferralFee(dealValue, feeCalculator.isLoyaltyTier(partner.total_deals));
+    }
+  }
+
+  if (req.body.referralSource !== undefined) {
+    if (!REFERRAL_SOURCES.includes(req.body.referralSource)) {
+      return res.status(400).json({ error: `referralSource must be one of: ${REFERRAL_SOURCES.join(', ')}` });
+    }
+    updates.referral_source = req.body.referralSource;
+  }
+
+  // Explicit fee override always wins over the auto-calculated figure set above.
+  if (req.body.referralFee !== undefined) {
+    updates.referral_fee = req.body.referralFee === null || req.body.referralFee === '' ? null : Number(req.body.referralFee);
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: 'No valid fields provided. Allowed: partnerPhone, referralSource, referralFee' });
+  }
+
+  const { data: updated, error: updateErr } = await supabaseAdmin.from('deals').update(updates).eq('id', deal.id).select().single();
+  if (updateErr || !updated) return res.status(500).json({ error: 'Could not update referral info — please try again' });
+
+  logger.info(`Admin updated referral info on deal ${updated.ref}`, { updates, admin: req.appUser?.id });
+  await supabaseAdmin.from('automation_log').insert({
+    deal_id: updated.id,
+    action: 'admin_referral_override',
+    status: 'sent',
+    payload: { updates, adminId: req.appUser?.id },
+  });
+
+  const warnings = [];
+  if (deal.referral_fee_paid) {
+    warnings.push('A referral fee was already recorded as paid on this deal — this change does NOT reverse or reissue any payment. Reconcile manually with finance.');
+  }
+  if (partnerRemoved && deal.doc003_signed) {
+    warnings.push('The removed partner had already signed DOC-003 — that signature no longer applies to this deal.');
+  }
+
+  let documentsRegenerated = [];
+  const partnerId = updated.referral_partner_id;
+  // Regenerate DOC-003 if: a partner was just newly attached/changed (it either
+  // didn't exist yet or printed the wrong partner's details), OR the fee was
+  // explicitly overridden on a deal that already has a DOC-003 (it printed the
+  // old figure). A referralSource-only change never affects DOC-003's content.
+  const shouldRegenerateDoc003 = partnerId && updated.doc001_url && (newPartner || (deal.doc003_url && req.body.referralFee !== undefined));
+  if (shouldRegenerateDoc003) {
+    try {
+      const partner = newPartner || (await supabaseAdmin.from('partners').select('*').eq('id', partnerId).single()).data;
+      if (partner) {
+        await generateAndSendDoc003(updated, partner);
+        documentsRegenerated.push('DOC-003 (Broker Referral Agreement)');
+      }
+    } catch (err) {
+      warnings.push(`Referral info was saved, but DOC-003 generation failed: ${err.message}.`);
+    }
+  }
+
+  const afterCheck = await dealFlowEngine.checkAndAdvanceIfStageComplete(updated.id);
+  const finalDeal = afterCheck || updated;
+
+  return res.json({
+    deal: documentsRegenerated.length > 0 ? { ...finalDeal, ...(await refetchDoc003Fields(finalDeal.id)) } : finalDeal,
+    documentsRegenerated,
+    warning: warnings.length > 0 ? warnings.join(' ') : null,
+  });
+}
+
+/** Re-fetches just the doc003_url/doc003_signed columns after regeneration — mirrors refetchDocFields but for DOC-003. */
+async function refetchDoc003Fields(dealId) {
+  const { data } = await supabaseAdmin.from('deals').select('doc003_url, doc003_signed, doc003_signnow_id').eq('id', dealId).single();
+  return data || {};
+}
+
+/**
+ * GET /api/admin/deals/:id/audit-log — the automation_log rows for this deal
+ * (mock TrustIn calls, admin overrides, document regeneration, stage-entry
+ * automation failures, and critically `trustin_funds_mismatch` when a buyer's
+ * transfer doesn't match the expected sale price). Previously this table was
+ * write-only from the admin's perspective — visible only via raw Supabase
+ * access — even though it's exactly the audit trail admin needs to see what
+ * happened and why a deal might be stuck.
+ */
+async function getDealAuditLog(req, res) {
+  const { data: deal, error: dealErr } = await supabaseAdmin.from('deals').select('id').eq('id', req.params.id).single();
+  if (dealErr || !deal) return res.status(404).json({ error: 'Deal not found' });
+
+  const { data: log, error } = await supabaseAdmin
+    .from('automation_log')
+    .select('*')
+    .eq('deal_id', req.params.id)
+    .order('created_at', { ascending: false });
+  if (error) return res.status(500).json({ error: 'Could not load audit log — please try again' });
+
+  return res.json({ log });
+}
+
+module.exports = {
+  getAllDeals,
+  getStats,
+  getDealDetail,
+  manualOverride,
+  forceStage,
+  reassignParty,
+  updatePartyIdentity,
+  resendSigningInvite,
+  updateReferral,
+  getDealAuditLog,
+};
