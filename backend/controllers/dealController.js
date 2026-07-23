@@ -7,6 +7,7 @@ const feeCalculator = require('../services/feeCalculator');
 const dealFlowEngine = require('../services/dealFlowEngine');
 const finesVerification = require('../services/finesVerificationService');
 const documentVision = require('../services/documentVisionService');
+const bankProofVerification = require('../services/bankProofVerificationService');
 const trustInKycService = require('../services/trustInKycService');
 const storageService = require('../services/storageService');
 const docGen = require('../services/documentGenerator');
@@ -472,6 +473,40 @@ async function extractMulkiya(req, res) {
 }
 
 /**
+ * POST /api/deals/:id/extract-mulkiya-back — accepts a base64 photo of the
+ * BACK of the Mulkiya. No fields are extracted into the deal record (the back
+ * doesn't carry any of the vehicle fields the Details form collects) — this
+ * just verifies the photo is legible and is in fact the back of a Mulkiya,
+ * and persists it (mulkiya_back_image_url, see 0009_mulkiya_back_image.sql)
+ * so admin has the complete document on file.
+ */
+async function extractMulkiyaBack(req, res) {
+  const { imageBase64, mediaType } = req.body;
+  if (!imageBase64) return res.status(400).json({ error: 'imageBase64 is required' });
+  const imageError = validateImageUpload(imageBase64, mediaType);
+  if (imageError) return res.status(400).json({ error: imageError });
+
+  const { data: deal, error } = await supabaseAdmin.from('deals').select('id, seller_id').eq('id', req.params.id).single();
+  if (error || !deal) return res.status(404).json({ error: 'Deal not found' });
+  if (deal.seller_id !== req.appUser.id) {
+    return res.status(403).json({ error: 'Only the seller can upload the Mulkiya' });
+  }
+
+  try {
+    const ext = mediaType === 'image/png' ? 'png' : 'jpg';
+    const imageUrl = await storageService.uploadUserImage(imageBase64, mediaType, `${deal.id}/mulkiya-back-${Date.now()}.${ext}`);
+    await supabaseAdmin.from('deals').update({ mulkiya_back_image_url: imageUrl }).eq('id', deal.id);
+  } catch (uploadErr) {
+    logger.warn('Mulkiya back image upload failed — continuing with verification only', { error: uploadErr.message, dealId: deal.id });
+  }
+
+  const result = await documentVision.extractMulkiyaBack({ imageBase64, mediaType });
+  if (!result.success) return res.status(422).json({ extracted: false, error: result.reason, reason: result.reason });
+
+  return res.json({ extracted: true });
+}
+
+/**
  * POST /api/deals/:id/extract-settlement — LoanClear only. Accepts a base64
  * bank settlement letter photo, runs Claude Vision extraction, and returns the
  * authoritative settlement amount + loan reference for the seller to
@@ -504,6 +539,47 @@ async function extractSettlement(req, res) {
   if (!result.success) return res.status(422).json({ extracted: false, error: result.reason, reason: result.reason });
 
   return res.json({ extracted: true, data: result.data });
+}
+
+/**
+ * POST /api/deals/:id/extract-bank-proof — accepts a base64 screenshot of the
+ * seller's online banking app or a bank statement, runs Claude Vision
+ * extraction, and cross-validates the extracted account holder name against
+ * the seller's own verified identity (users.full_name, set during the KYC
+ * stage) — so proceeds can't be routed to someone else's account. The raw
+ * photo IS persisted (bank_proof_image_url, see 0008_bank_proof_image.sql)
+ * regardless of whether extraction/validation succeeds, so admin can review
+ * it if a genuine name-match edge case needs a manual look.
+ */
+async function extractBankProof(req, res) {
+  const { imageBase64, mediaType } = req.body;
+  if (!imageBase64) return res.status(400).json({ error: 'imageBase64 is required' });
+  const imageError = validateImageUpload(imageBase64, mediaType);
+  if (imageError) return res.status(400).json({ error: imageError });
+
+  const { data: deal, error } = await supabaseAdmin.from('deals').select('id, seller_id').eq('id', req.params.id).single();
+  if (error || !deal) return res.status(404).json({ error: 'Deal not found' });
+  if (deal.seller_id !== req.appUser.id) {
+    return res.status(403).json({ error: 'Only the seller can upload proof of their proceeds account' });
+  }
+
+  try {
+    const ext = mediaType === 'image/png' ? 'png' : 'jpg';
+    const imageUrl = await storageService.uploadUserImage(imageBase64, mediaType, `${deal.id}/bank-proof-${Date.now()}.${ext}`);
+    await supabaseAdmin.from('deals').update({ bank_proof_image_url: imageUrl }).eq('id', deal.id);
+  } catch (uploadErr) {
+    logger.warn('Bank proof image upload failed — continuing with extraction only', { error: uploadErr.message, dealId: deal.id });
+  }
+
+  const { data: seller } = await supabaseAdmin.from('users').select('full_name').eq('id', req.appUser.id).single();
+
+  const result = await bankProofVerification.verifyBankProof({ imageBase64, mediaType, expectedHolderName: seller?.full_name });
+  if (!result.success) return res.status(422).json({ extracted: false, error: result.reason, reason: result.reason });
+
+  return res.json({
+    extracted: true,
+    data: { iban: result.iban, accountHolderName: result.accountHolderName, bankName: result.bankName },
+  });
 }
 
 /**
@@ -749,7 +825,9 @@ module.exports = {
   advanceStage,
   verifyFines,
   extractMulkiya,
+  extractMulkiyaBack,
   extractSettlement,
+  extractBankProof,
   initiateKyc,
   generateDocs,
   getDocs,

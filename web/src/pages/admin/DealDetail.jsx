@@ -234,19 +234,29 @@ export default function AdminDealDetail() {
         </DarkCard>
       </div>
 
-      {(deal.mulkiya_image_url || deal.settlement_image_url) && (
+      {(deal.mulkiya_image_url || deal.mulkiya_back_image_url || deal.settlement_image_url || deal.bank_proof_image_url) && (
         <DarkCard className="mt-4">
           <h4 className="font-display text-base font-semibold text-white mb-1">Uploaded attachments</h4>
           <p className="text-sm text-white/50 mb-3">Check the original photo if the fields below look wrong — Claude Vision extraction isn't perfect.</p>
           <div className="flex flex-col gap-2">
             {deal.mulkiya_image_url && (
               <a href={deal.mulkiya_image_url} target="_blank" rel="noreferrer" className="text-sm text-gold underline">
-                View uploaded Mulkiya (vehicle registration card)
+                View uploaded Mulkiya — front (vehicle registration card)
+              </a>
+            )}
+            {deal.mulkiya_back_image_url && (
+              <a href={deal.mulkiya_back_image_url} target="_blank" rel="noreferrer" className="text-sm text-gold underline">
+                View uploaded Mulkiya — back
               </a>
             )}
             {deal.settlement_image_url && (
               <a href={deal.settlement_image_url} target="_blank" rel="noreferrer" className="text-sm text-gold underline">
                 View uploaded bank settlement letter
+              </a>
+            )}
+            {deal.bank_proof_image_url && (
+              <a href={deal.bank_proof_image_url} target="_blank" rel="noreferrer" className="text-sm text-gold underline">
+                View uploaded proof of proceeds account (IBAN/name match)
               </a>
             )}
           </div>

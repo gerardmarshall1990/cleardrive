@@ -68,11 +68,27 @@ router.post(
 );
 
 router.post(
+  '/:id/extract-mulkiya-back',
+  requireAuth,
+  [body('imageBase64').isString().notEmpty()],
+  validate,
+  asyncHandler(dealController.extractMulkiyaBack)
+);
+
+router.post(
   '/:id/extract-settlement',
   requireAuth,
   [body('imageBase64').isString().notEmpty()],
   validate,
   asyncHandler(dealController.extractSettlement)
+);
+
+router.post(
+  '/:id/extract-bank-proof',
+  requireAuth,
+  [body('imageBase64').isString().notEmpty()],
+  validate,
+  asyncHandler(dealController.extractBankProof)
 );
 
 router.post('/:id/kyc/initiate', requireAuth, asyncHandler(dealController.initiateKyc));

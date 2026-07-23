@@ -80,6 +80,38 @@ async function extractMulkiya({ imageBase64, mediaType }) {
   };
 }
 
+const MULKIYA_BACK_PROMPT =
+  'This is meant to be the BACK side of a UAE vehicle registration card (Mulkiya) — it typically shows registration/insurance ' +
+  'expiry dates, insurance company, engine number, and vehicle specification details. Return JSON only, no other text, in exactly ' +
+  'this shape: {"legible": boolean}. Set legible to true only if this is clearly the back of a Mulkiya and the printed text is readable — ' +
+  'set it to false if this looks like the front of the Mulkiya, an unrelated document, or is too blurry to read.';
+
+/**
+ * Verifies a Mulkiya BACK-side photo is legible and is in fact the back of a
+ * Mulkiya (not a duplicate of the front, or an unrelated photo). Unlike the
+ * front side, no fields here are extracted into the deal record — this is
+ * purely a completeness/legibility check, with the photo persisted so admin
+ * has the full document on file.
+ * @returns {Promise<{success:boolean, reason?:string}>}
+ */
+async function extractMulkiyaBack({ imageBase64, mediaType }) {
+  if (!imageBase64) return { success: false, reason: 'No image provided' };
+
+  let extracted;
+  try {
+    extracted = await callVision({ imageBase64, mediaType, prompt: MULKIYA_BACK_PROMPT, maxTokens: 128 });
+  } catch (err) {
+    logger.error('Claude Vision Mulkiya back-side check failed', { error: err.message });
+    return { success: false, reason: 'Could not read the photo — please retry with a clearer image of the back of the Mulkiya' };
+  }
+
+  if (!extracted.legible) {
+    return { success: false, reason: 'This doesn\u2019t look like a clear photo of the back of the Mulkiya — please retry' };
+  }
+
+  return { success: true };
+}
+
 const SETTLEMENT_PROMPT =
   'This is a bank loan settlement letter for a vehicle finance account in the UAE. Extract the exact settlement/payoff amount ' +
   'and the loan/finance account reference number. Return JSON only, no other text, in exactly this shape: ' +
@@ -162,4 +194,4 @@ async function extractEmiratesId({ imageBase64, mediaType }) {
   };
 }
 
-module.exports = { extractMulkiya, extractSettlementLetter, extractEmiratesId };
+module.exports = { extractMulkiya, extractMulkiyaBack, extractSettlementLetter, extractEmiratesId };

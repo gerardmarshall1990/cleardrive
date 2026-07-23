@@ -229,19 +229,29 @@ export default function AdminDealDetail({ route }) {
         <Row label="Funds confirmed" value={deal.funds_confirmed ? 'Yes' : 'No'} />
       </DarkCard>
 
-      {(deal.mulkiya_image_url || deal.settlement_image_url) && (
+      {(deal.mulkiya_image_url || deal.mulkiya_back_image_url || deal.settlement_image_url || deal.bank_proof_image_url) && (
         <DarkCard style={{ marginTop: 12 }}>
           <Text style={styles.cardTitle}>Uploaded attachments</Text>
           <Text style={[styles.cardBody, { marginBottom: 12 }]}>Check the original photo if the fields below look wrong — Claude Vision extraction isn't perfect.</Text>
           <View style={{ gap: 8 }}>
             {deal.mulkiya_image_url && (
               <Text style={styles.linkText} onPress={() => Linking.openURL(deal.mulkiya_image_url)}>
-                View uploaded Mulkiya (vehicle registration card)
+                View uploaded Mulkiya — front (vehicle registration card)
+              </Text>
+            )}
+            {deal.mulkiya_back_image_url && (
+              <Text style={styles.linkText} onPress={() => Linking.openURL(deal.mulkiya_back_image_url)}>
+                View uploaded Mulkiya — back
               </Text>
             )}
             {deal.settlement_image_url && (
               <Text style={styles.linkText} onPress={() => Linking.openURL(deal.settlement_image_url)}>
                 View uploaded bank settlement letter
+              </Text>
+            )}
+            {deal.bank_proof_image_url && (
+              <Text style={styles.linkText} onPress={() => Linking.openURL(deal.bank_proof_image_url)}>
+                View uploaded proof of proceeds account (IBAN/name match)
               </Text>
             )}
           </View>

@@ -544,9 +544,15 @@ function DetailsCard({ deal, accent, onUpdate, onError }) {
   const [mulkiyaBusy, setMulkiyaBusy] = useState(false);
   const [mulkiyaMsg, setMulkiyaMsg] = useState(null);
   const [mulkiyaVerified, setMulkiyaVerified] = useState(false);
+  const [mulkiyaBackBusy, setMulkiyaBackBusy] = useState(false);
+  const [mulkiyaBackMsg, setMulkiyaBackMsg] = useState(null);
+  const [mulkiyaBackVerified, setMulkiyaBackVerified] = useState(false);
   const [settlementBusy, setSettlementBusy] = useState(false);
   const [settlementMsg, setSettlementMsg] = useState(null);
   const [settlementVerified, setSettlementVerified] = useState(false);
+  const [bankProofBusy, setBankProofBusy] = useState(false);
+  const [bankProofMsg, setBankProofMsg] = useState(null);
+  const [bankProofVerified, setBankProofVerified] = useState(false);
 
   function set(field, value) {
     setForm((f) => ({ ...f, [field]: value }));
@@ -592,6 +598,37 @@ function DetailsCard({ deal, accent, onUpdate, onError }) {
     }
   }
 
+  // Back-of-Mulkiya upload — no fields are extracted from it (the back
+  // doesn't carry any of the vehicle fields above), it's just verified as a
+  // legible photo of the back of a Mulkiya and persisted so admin has the
+  // complete document on file.
+  async function handleMulkiyaBackFile() {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) return onError('Photo library permission is required to upload a photo');
+
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      base64: true,
+      quality: 0.8,
+    });
+    if (res.canceled || !res.assets?.[0]) return;
+
+    setMulkiyaBackBusy(true);
+    onError('');
+    setMulkiyaBackMsg(null);
+    try {
+      const { base64, mediaType } = await assetToBase64(res.assets[0]);
+      await api.post(`/api/deals/${deal.id}/extract-mulkiya-back`, { imageBase64: base64, mediaType });
+      setMulkiyaBackVerified(true);
+      setMulkiyaBackMsg({ ok: true, text: 'Uploaded and verified.' });
+    } catch (err) {
+      setMulkiyaBackVerified(false);
+      setMulkiyaBackMsg({ ok: false, text: `${err.message} — please try uploading the back of the Mulkiya again.` });
+    } finally {
+      setMulkiyaBackBusy(false);
+    }
+  }
+
   // Settlement letter upload (LoanClear only) → Claude Vision extraction → the
   // exact bank payoff figure and reference become the authoritative loan
   // amount, superseding the estimate entered at quote time. Only saved once
@@ -629,10 +666,52 @@ function DetailsCard({ deal, accent, onUpdate, onError }) {
     }
   }
 
+  // Bank proof upload (online banking screenshot or bank statement) → Claude
+  // Vision extracts the IBAN + account holder name and cross-validates the
+  // name against the seller's own verified identity (set during KYC) — this
+  // is what actually enforces "the proceeds account must be in your own
+  // name", not just the label text below. Autofills IBAN/bank but never the
+  // account holder name (that field should already reflect the seller's own
+  // name, not be overwritten by OCR of it).
+  async function handleBankProofFile() {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) return onError('Photo library permission is required to upload a photo');
+
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      base64: true,
+      quality: 0.8,
+    });
+    if (res.canceled || !res.assets?.[0]) return;
+
+    setBankProofBusy(true);
+    onError('');
+    setBankProofMsg(null);
+    try {
+      const { base64, mediaType } = await assetToBase64(res.assets[0]);
+      const { data } = await api.post(`/api/deals/${deal.id}/extract-bank-proof`, { imageBase64: base64, mediaType });
+      setForm((f) => ({
+        ...f,
+        seller_iban: data.iban || f.seller_iban,
+        seller_acc_name: data.accountHolderName || f.seller_acc_name,
+        seller_proc_bank: data.bankName || f.seller_proc_bank,
+      }));
+      setBankProofVerified(true);
+      setBankProofMsg({ ok: true, text: 'Verified — the account holder name matches your verified identity.' });
+    } catch (err) {
+      setBankProofVerified(false);
+      setBankProofMsg({ ok: false, text: `${err.message} — please try uploading a clearer screenshot, or one showing your own account.` });
+    } finally {
+      setBankProofBusy(false);
+    }
+  }
+
   async function handleSubmit() {
     onError('');
-    if (!mulkiyaVerified) return onError('Please upload the Mulkiya (vehicle registration card) before continuing.');
+    if (!mulkiyaVerified) return onError('Please upload the front of the Mulkiya (vehicle registration card) before continuing.');
+    if (!mulkiyaBackVerified) return onError('Please upload the back of the Mulkiya (vehicle registration card) before continuing.');
     if (deal.product === 'loanclear' && !settlementVerified) return onError('Please upload the bank settlement letter before continuing.');
+    if (!bankProofVerified) return onError('Please upload proof of your proceeds account (a screenshot of your online banking or bank statement) before continuing.');
 
     const fieldsToCheck = deal.product === 'loanclear' ? [...REQUIRED_DETAIL_FIELDS, ...REQUIRED_LOAN_FIELDS] : REQUIRED_DETAIL_FIELDS;
     const missingField = fieldsToCheck.find((f) => !String(form[f.key] ?? '').trim());
@@ -662,15 +741,24 @@ function DetailsCard({ deal, accent, onUpdate, onError }) {
       <Text style={[styles.cardTitle, { marginBottom: 12 }]}>Vehicle & financial details</Text>
 
       <UploadDropzone
-        label="Upload Mulkiya (vehicle registration card) — required"
+        label="Upload Mulkiya — front (vehicle registration card) — required"
         busy={mulkiyaBusy}
         onPick={handleMulkiyaFile}
       />
       {mulkiyaVerified ? (
-        <Text style={styles.savedMsg}>✓ Mulkiya uploaded and verified</Text>
+        <Text style={styles.savedMsg}>✓ Mulkiya (front) uploaded and verified</Text>
       ) : (
         mulkiyaMsg && <ErrorBanner message={mulkiyaMsg.text} />
       )}
+
+      <View style={{ marginTop: 14 }}>
+        <UploadDropzone label="Upload Mulkiya — back — required" busy={mulkiyaBackBusy} onPick={handleMulkiyaBackFile} />
+        {mulkiyaBackVerified ? (
+          <Text style={styles.savedMsg}>✓ Mulkiya (back) uploaded and verified</Text>
+        ) : (
+          mulkiyaBackMsg && <ErrorBanner message={mulkiyaBackMsg.text} />
+        )}
+      </View>
 
       {deal.product === 'loanclear' && (
         <View style={{ marginTop: 14 }}>
@@ -711,10 +799,21 @@ function DetailsCard({ deal, accent, onUpdate, onError }) {
             <Input label="Bank" value={form.loan_bank} onChangeText={(v) => set('loan_bank', v)} />
           </>
         )}
-        <Text style={styles.sectionLabel}>Your proceeds account</Text>
+        <Text style={styles.sectionLabel}>Your proceeds account (must be in your own name)</Text>
         <Input label="IBAN" value={form.seller_iban} onChangeText={(v) => set('seller_iban', v)} />
-        <Input label="Account holder name" value={form.seller_acc_name} onChangeText={(v) => set('seller_acc_name', v)} />
+        <Input label="Account holder name (must match your verified identity)" value={form.seller_acc_name} onChangeText={(v) => set('seller_acc_name', v)} />
         <Input label="Bank" value={form.seller_proc_bank} onChangeText={(v) => set('seller_proc_bank', v)} />
+
+        <UploadDropzone
+          label="Upload proof of your proceeds account (online banking screenshot or bank statement) — required"
+          busy={bankProofBusy}
+          onPick={handleBankProofFile}
+        />
+        {bankProofVerified ? (
+          <Text style={styles.savedMsg}>✓ Bank proof uploaded and verified</Text>
+        ) : (
+          bankProofMsg && <ErrorBanner message={bankProofMsg.text} />
+        )}
 
         <Button variant={accent} loading={loading} onPress={handleSubmit}>
           Save & Continue →
