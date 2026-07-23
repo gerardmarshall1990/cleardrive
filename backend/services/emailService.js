@@ -94,6 +94,16 @@ const templates = {
               <span style="float: right; color: #0a1a3a; font-weight: 700; font-size: 15px;">Deal ${deal.ref}</span>
             </div>
             <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+              ${deal.make || deal.model ? `
+              <tr>
+                <td style="padding: 12px 20px; color: #888888; border-bottom: 1px solid #f0f0f4;">Make / Model</td>
+                <td style="padding: 12px 20px; color: #0a1a3a; font-weight: 600; text-align: right; border-bottom: 1px solid #f0f0f4;">${[deal.make, deal.model].filter(Boolean).join(' ') || '—'}</td>
+              </tr>` : ''}
+              ${deal.year ? `
+              <tr>
+                <td style="padding: 12px 20px; color: #888888; border-bottom: 1px solid #f0f0f4;">Year</td>
+                <td style="padding: 12px 20px; color: #0a1a3a; font-weight: 600; text-align: right; border-bottom: 1px solid #f0f0f4;">${deal.year}</td>
+              </tr>` : ''}
               <tr>
                 <td style="padding: 12px 20px; color: #888888; border-bottom: 1px solid #f0f0f4;">Plate</td>
                 <td style="padding: 12px 20px; color: #0a1a3a; font-weight: 600; text-align: right; border-bottom: 1px solid #f0f0f4;">${deal.plate}</td>
