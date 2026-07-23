@@ -112,10 +112,15 @@ export default function AdminDealDetail() {
     setError('');
     setSuccess('');
     try {
-      const { deal: updated } = await api.put(`/api/admin/deals/${id}/override`, detailsForm);
+      const { deal: updated, documentsRegenerated, warning } = await api.put(`/api/admin/deals/${id}/override`, detailsForm);
       setDeal(updated);
       setDetailsForm(null);
-      setSuccess('Vehicle & financial details updated');
+      if (documentsRegenerated?.length > 0) {
+        setSuccess(`Details updated. Regenerated and re-sent for signature: ${documentsRegenerated.join(', ')}.`);
+      } else {
+        setSuccess('Vehicle & financial details updated');
+      }
+      if (warning) setError(warning);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -189,6 +194,11 @@ export default function AdminDealDetail() {
       )}
 
       <ProgressSteps currentStage={deal.status} accent={accent} />
+
+      <div className="mt-4">
+        <ErrorBanner message={error} />
+        <SuccessBanner message={success} />
+      </div>
 
       {deal.blockedOn?.length > 0 && (
         <DarkCard className="mt-6 !border-error/30 !bg-error/6">
@@ -267,7 +277,8 @@ export default function AdminDealDetail() {
         <h4 className="font-display text-base font-semibold text-white mb-1">Vehicle & financial details — manual correction</h4>
         <p className="text-sm text-white/50 mb-4">
           Use this if Claude Vision misread the Mulkiya or settlement letter — check the attachment above, then correct the field(s) here. Saving
-          re-checks whether the deal can now advance.
+          re-checks whether the deal can now advance. If DOC-001 and/or DOC-002 were already generated (even already signed), correcting a field
+          they print automatically regenerates the document and re-sends it for signature — no need to restart the deal.
         </p>
         {detailsForm && (
           <form onSubmit={submitDetailsForm} className="grid gap-3 sm:grid-cols-2">
@@ -299,8 +310,6 @@ export default function AdminDealDetail() {
       <DarkCard className="mt-4">
         <h4 className="font-display text-base font-semibold text-white mb-1">Manual overrides</h4>
         <p className="text-sm text-white/50 mb-4">Use only for edge cases — e.g. a signature or ID check collected outside the platform.</p>
-        <ErrorBanner message={error} />
-        <SuccessBanner message={success} />
         <div className="flex flex-col gap-3 mt-2">
           {OVERRIDE_FIELDS.filter((f) => !f.requiresPartner || deal.referral_partner_id).map((f) => (
             <div key={f.key} className="rounded-lg border border-white/8 bg-white/4 p-3">

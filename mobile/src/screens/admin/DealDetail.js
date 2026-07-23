@@ -112,10 +112,15 @@ export default function AdminDealDetail({ route }) {
     setError('');
     setSuccess('');
     try {
-      const { deal: updated } = await api.put(`/api/admin/deals/${id}/override`, detailsForm);
+      const { deal: updated, documentsRegenerated, warning } = await api.put(`/api/admin/deals/${id}/override`, detailsForm);
       setDeal(updated);
       setDetailsForm(null);
-      setSuccess('Vehicle & financial details updated');
+      if (documentsRegenerated?.length > 0) {
+        setSuccess(`Details updated. Regenerated and re-sent for signature: ${documentsRegenerated.join(', ')}.`);
+      } else {
+        setSuccess('Vehicle & financial details updated');
+      }
+      if (warning) setError(warning);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -186,6 +191,11 @@ export default function AdminDealDetail({ route }) {
       )}
 
       <ProgressSteps currentStage={deal.status} accent={accent} />
+
+      <View style={{ marginTop: 12 }}>
+        <ErrorBanner message={error} />
+        <SuccessBanner message={success} />
+      </View>
 
       {deal.blockedOn?.length > 0 && (
         <DarkCard style={[styles.blockedCard, { marginTop: 16 }]}>
@@ -262,10 +272,9 @@ export default function AdminDealDetail({ route }) {
         <Text style={styles.cardTitle}>Vehicle & financial details — manual correction</Text>
         <Text style={[styles.cardBody, { marginBottom: 12 }]}>
           Use this if Claude Vision misread the Mulkiya or settlement letter — check the attachment above, then correct the field(s) here. Saving
-          re-checks whether the deal can now advance.
+          re-checks whether the deal can now advance. If DOC-001 and/or DOC-002 were already generated (even already signed), correcting a field
+          they print automatically regenerates the document and re-sends it for signature — no need to restart the deal.
         </Text>
-        <ErrorBanner message={error} />
-        <SuccessBanner message={success} />
         {detailsForm && (
           <View style={{ gap: 12 }}>
             {DETAIL_FIELDS.filter((f) => !f.loanOnly || deal.product === 'loanclear').map((f) => (
@@ -292,8 +301,6 @@ export default function AdminDealDetail({ route }) {
       <DarkCard style={{ marginTop: 12 }}>
         <Text style={styles.cardTitle}>Manual overrides</Text>
         <Text style={[styles.cardBody, { marginBottom: 12 }]}>Use only for edge cases — e.g. a signature or ID check collected outside the platform.</Text>
-        <ErrorBanner message={error} />
-        <SuccessBanner message={success} />
         <View style={{ gap: 10 }}>
           {OVERRIDE_FIELDS.filter((f) => !f.requiresPartner || deal.referral_partner_id).map((f) => (
             <View key={f.key} style={styles.overrideItem}>

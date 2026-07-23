@@ -2,9 +2,11 @@
 // and manual override for the ops team.
 
 const { supabaseAdmin } = require('../config/supabase');
-const { STAGES } = require('../utils/dealStages');
+const { STAGES, stageIndex } = require('../utils/dealStages');
 const dealFlowEngine = require('../services/dealFlowEngine');
 const feeCalculator = require('../services/feeCalculator');
+const docGen = require('../services/documentGenerator');
+const signNow = require('../services/signNowService');
 const logger = require('../utils/logger');
 
 // Boolean fields an admin may manually flip while TrustIn KYC / SignNow signing
@@ -79,6 +81,104 @@ const FIELD_LABELS = {
   fines_cleared: 'Outstanding RTA traffic fines not yet confirmed paid by TrustIn',
   transfer_cert_url: 'Tasjeel transfer certificate not yet uploaded',
 };
+
+// Which ADMIN_DETAIL_FIELDS are actually printed on each generated document —
+// mirrors the field lists documentGenerator.js reads for each doc. Used so a
+// correction only regenerates the document(s) it actually affects, instead of
+// blindly regenerating everything on any edit.
+const DOC001_FIELDS = ['vin', 'plate', 'make', 'model', 'year', 'colour', 'emirate', 'mileage', 'sale_price', 'loan_amount', 'loan_bank'];
+const DOC002_FIELDS = ['plate', 'vin', 'make', 'model', 'year', 'loan_bank'];
+// DOC-009 (Buyer Payment Instruction) is intentionally out of scope here — it
+// has no doc009_url column (never persisted anywhere, generated-and-returned
+// only from POST /generate-docs) and isn't surfaced in any UI today, so there's
+// nothing to reset/re-link. Fixing that persistence gap is a separate, unrelated task.
+
+/**
+ * After an admin corrects a vehicle/financial field, regenerates any generated
+ * document(s) that print that field, resets their signed status so both
+ * parties are prompted to re-sign the corrected version, and (best-effort)
+ * re-uploads to SignNow and re-sends the signing invite. This is the mechanism
+ * that closes the "mistake found after doc generated -> deal stuck, must start
+ * over" gap: instead, the deal keeps moving, just with a corrected document
+ * that needs a fresh signature.
+ *
+ * Never blocks or throws past the caller — a SignNow failure here still
+ * leaves the corrected PDF generated and saved; only the re-invite step is
+ * best-effort (mirrors generateAndSendDocuments's own try/catch).
+ *
+ * @returns {Promise<{regenerated: string[], warning: string|null}>}
+ */
+async function regenerateAffectedDocuments(deal, changedFields, adminId) {
+  const regenerated = [];
+  const docUpdates = {};
+
+  const needsDoc001 = deal.doc001_url && changedFields.some((f) => DOC001_FIELDS.includes(f));
+  const needsDoc002 = deal.doc002_url && changedFields.some((f) => DOC002_FIELDS.includes(f));
+
+  if (!needsDoc001 && !needsDoc002) return { regenerated, warning: null };
+
+  const [{ data: seller }, { data: buyer }] = await Promise.all([
+    deal.seller_id ? supabaseAdmin.from('users').select('*').eq('id', deal.seller_id).single() : { data: null },
+    deal.buyer_id ? supabaseAdmin.from('users').select('*').eq('id', deal.buyer_id).single() : { data: null },
+  ]);
+
+  if (needsDoc001) {
+    const doc001 = await docGen.generateDoc001(deal, seller, buyer);
+    docUpdates.doc001_url = doc001.url;
+    docUpdates.doc001_signed = false;
+    docUpdates.doc001_signnow_id = null;
+    regenerated.push('DOC-001 (Transaction & Escrow Agreement)');
+    try {
+      const doc001Id = await signNow.uploadDocument(doc001.filePath);
+      docUpdates.doc001_signnow_id = doc001Id;
+      await signNow.sendSigningInvite(doc001Id, [
+        { email: seller?.email, role: 'Seller', order: 1 },
+        { email: buyer?.email, role: 'Buyer', order: 2 },
+      ]);
+    } catch (err) {
+      logger.warn('SignNow re-upload/invite skipped or failed for regenerated DOC-001', { dealRef: deal.ref, error: err.message });
+    }
+  }
+
+  if (needsDoc002) {
+    const doc002 = await docGen.generateDoc002(deal, seller);
+    docUpdates.doc002_url = doc002.url;
+    docUpdates.doc002_signed = false;
+    docUpdates.doc002_signnow_id = null;
+    regenerated.push('DOC-002 (Limited Power of Attorney)');
+    try {
+      const doc002Id = await signNow.uploadDocument(doc002.filePath);
+      docUpdates.doc002_signnow_id = doc002Id;
+      await signNow.sendSigningInvite(doc002Id, [{ email: seller?.email, role: 'Seller', order: 1 }]);
+    } catch (err) {
+      logger.warn('SignNow re-upload/invite skipped or failed for regenerated DOC-002', { dealRef: deal.ref, error: err.message });
+    }
+  }
+
+  if (Object.keys(docUpdates).length > 0) {
+    await supabaseAdmin.from('deals').update(docUpdates).eq('id', deal.id);
+  }
+
+  // Funds may already have moved based on the original (now-corrected) figures
+  // once the deal has reached ESCROW — regenerating the document doesn't undo
+  // that. Surface a clear warning so admin manually reconciles the escrow
+  // amount/payout rather than assuming the correction alone fixes it.
+  const warning =
+    stageIndex(deal.status) >= stageIndex(STAGES.ESCROW)
+      ? 'This deal is already at or past the Escrow stage — funds may already have moved based on the original figures. ' +
+        'The document(s) above were regenerated and re-sent for signature, but you must manually verify/adjust the actual ' +
+        'escrow payout amount to match the correction.'
+      : null;
+
+  await supabaseAdmin.from('automation_log').insert({
+    deal_id: deal.id,
+    action: 'admin_document_regeneration',
+    status: 'sent',
+    payload: { changedFields, regenerated, warning, adminId },
+  });
+
+  return { regenerated, warning };
+}
 
 const STUCK_THRESHOLD_MS = 2 * 60 * 60 * 1000; // flag if unchanged >2hrs, per design spec
 
@@ -176,6 +276,9 @@ async function manualOverride(req, res) {
   for (const field of ADMIN_DETAIL_FIELDS) {
     if (req.body[field] !== undefined) updates[field] = req.body[field];
   }
+  // Tracked before cd_fee/net_proceeds get added below, so document
+  // regeneration only fires for fields the admin actually corrected.
+  const changedDetailFields = ADMIN_DETAIL_FIELDS.filter((f) => updates[f] !== undefined);
 
   // Admin marking fines_verified=true can optionally supply the actual fines
   // figure (e.g. read off the RTA screenshot themselves) — recalculate fee/net
@@ -223,8 +326,39 @@ async function manualOverride(req, res) {
     payload: { updates, adminId: req.appUser?.id },
   });
 
+  // A corrected vehicle/financial field may already be printed on a generated
+  // (possibly already-signed) document — regenerate it and reset its signed
+  // status so the deal doesn't get stuck, instead of requiring a restart.
+  let documentsRegenerated = [];
+  let regenerationWarning = null;
+  if (changedDetailFields.length > 0) {
+    try {
+      const result = await regenerateAffectedDocuments(updated, changedDetailFields, req.appUser?.id);
+      documentsRegenerated = result.regenerated;
+      regenerationWarning = result.warning;
+    } catch (err) {
+      logger.error(`Document regeneration failed for deal ${updated.ref}`, { error: err.message });
+      regenerationWarning = `Field(s) were saved, but document regeneration failed: ${err.message}. Please retry or regenerate manually.`;
+    }
+  }
+
   const afterCheck = await dealFlowEngine.checkAndAdvanceIfStageComplete(updated.id);
-  return res.json({ deal: afterCheck || updated });
+  const finalDeal = afterCheck || updated;
+  return res.json({
+    deal: documentsRegenerated.length > 0 ? { ...finalDeal, ...(await refetchDocFields(finalDeal.id)) } : finalDeal,
+    documentsRegenerated,
+    warning: regenerationWarning,
+  });
+}
+
+/** Re-fetches just the doc*_url/doc*_signed columns after regeneration, so the response reflects the new URLs/reset signed flags without a second full deal query elsewhere. */
+async function refetchDocFields(dealId) {
+  const { data } = await supabaseAdmin
+    .from('deals')
+    .select('doc001_url, doc001_signed, doc001_signnow_id, doc002_url, doc002_signed, doc002_signnow_id')
+    .eq('id', dealId)
+    .single();
+  return data || {};
 }
 
 module.exports = { getAllDeals, getStats, getDealDetail, manualOverride };
