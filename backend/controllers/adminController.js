@@ -70,6 +70,27 @@ const USER_IDENTITY_FIELDS = ['full_name', 'emirates_id', 'nationality', 'phone'
 const IDENTITY_FIELDS_ON_DOC001 = ['full_name', 'emirates_id', 'phone'];
 const IDENTITY_FIELDS_ON_DOC002_SELLER_ONLY = ['full_name', 'emirates_id', 'nationality', 'phone'];
 
+// When force-stage moves a deal BACKWARD, the flags/values that gate leaving
+// the target stage (see dealFlowEngine.REQUIRED_FIELDS_TO_LEAVE) must be reset
+// too — otherwise the deal's `status` moves back but the flags stay true, so
+// the very next automatic advance-check (triggered by literally any other
+// admin override, a SignNow webhook, etc.) instantly fast-forwards the deal
+// right back past the stage the admin just sent it to, without the buyer/
+// seller actually doing anything. The buyer/seller app renders purely off
+// `deal.status` (see DealDetail.jsx's switch statement) — it has no idea a
+// flag was quietly flipped, so without this reset "force stage back to KYC"
+// looked like it did nothing at all.
+// QUOTE/DETAILS are deliberately excluded — their "required fields" are real
+// data (plate, VIN, sale price, IBAN...), not verification flags, and wiping
+// them would destroy correct data rather than just asking for re-verification.
+const STAGE_RESET_FIELDS = {
+  [STAGES.FINES_VERIFY]: { fines_verified: false },
+  [STAGES.KYC]: { seller_kyc_complete: false, buyer_kyc_complete: false },
+  [STAGES.SIGNING]: { doc001_signed: false, doc001_signnow_id: null, doc002_signed: false, doc002_signnow_id: null, doc003_signed: false, doc003_signnow_id: null },
+  [STAGES.ESCROW]: { funds_confirmed: false, loan_cleared: false, fines_cleared: false },
+  [STAGES.TASJEEL]: { transfer_cert_url: null },
+};
+
 // Mirrors the referral_source column comment in 0001_init.sql. A seller often
 // only mentions/remembers the dealer or broker who referred them after the
 // deal has already started (or the wrong one was entered) — admin needs to be
@@ -422,6 +443,14 @@ async function refetchDocFields(dealId) {
  * TrustIn escrow deal being created, or double-charging/paying out. Admin
  * must trigger any of those manually afterwards using the other admin tools
  * (Regenerate documents, Resend signing invite, etc.) if the new stage needs them.
+ *
+ * When moving BACKWARD (target is earlier than the deal's current stage),
+ * also resets whichever verification flags/values gate leaving the target
+ * stage (STAGE_RESET_FIELDS) — otherwise the deal's status would move back
+ * but the underlying flags stay true, so the very next unrelated
+ * advance-check silently fast-forwards it right back to where it was, with
+ * the buyer/seller never having redone anything (see STAGE_RESET_FIELDS'
+ * comment for the full reasoning). Moving FORWARD never resets anything.
  */
 async function forceStage(req, res) {
   const { targetStage, reason } = req.body;
@@ -436,23 +465,34 @@ async function forceStage(req, res) {
   if (error || !deal) return res.status(404).json({ error: 'Deal not found' });
   if (deal.status === targetStage) return res.status(400).json({ error: 'Deal is already in that stage' });
 
-  const { data: updated, error: updateErr } = await supabaseAdmin.from('deals').update({ status: targetStage }).eq('id', deal.id).select().single();
+  const isBackward = stageIndex(targetStage) !== -1 && stageIndex(targetStage) < stageIndex(deal.status);
+  const resetFields = isBackward ? STAGE_RESET_FIELDS[targetStage] || {} : {};
+
+  const { data: updated, error: updateErr } = await supabaseAdmin
+    .from('deals')
+    .update({ status: targetStage, ...resetFields })
+    .eq('id', deal.id)
+    .select()
+    .single();
   if (updateErr || !updated) return res.status(500).json({ error: 'Could not change stage — please try again' });
 
-  logger.info(`Admin force-set deal ${updated.ref} from ${deal.status} to ${targetStage}`, { reason, admin: req.appUser?.id });
+  logger.info(`Admin force-set deal ${updated.ref} from ${deal.status} to ${targetStage}`, { reason, resetFields, admin: req.appUser?.id });
   await supabaseAdmin.from('automation_log').insert({
     deal_id: updated.id,
     action: 'admin_force_stage',
     status: 'sent',
-    payload: { from: deal.status, to: targetStage, reason, adminId: req.appUser?.id },
+    payload: { from: deal.status, to: targetStage, reason, resetFields: Object.keys(resetFields), adminId: req.appUser?.id },
   });
 
-  return res.json({
-    deal: updated,
-    warning:
-      'Stage was force-set directly — no automated actions for the new stage were re-triggered (no WhatsApp messages, document generation, or TrustIn/escrow calls). ' +
-      'Trigger any of those manually if the new stage needs them.',
-  });
+  const resetFieldNames = Object.keys(resetFields);
+  const warning =
+    'Stage was force-set directly — no automated actions for the new stage were re-triggered (no WhatsApp messages, document generation, or TrustIn/escrow calls). ' +
+    'Trigger any of those manually if the new stage needs them.' +
+    (resetFieldNames.length > 0
+      ? ` Because this was a backward move, the following were reset so the deal can't silently skip back past this stage: ${resetFieldNames.join(', ')}. Manually notify the affected part(y/ies) to redo this — send them the relevant link from the Links card below.`
+      : '');
+
+  return res.json({ deal: updated, warning });
 }
 
 /**

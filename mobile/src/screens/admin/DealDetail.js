@@ -708,7 +708,9 @@ export default function AdminDealDetail({ route }) {
         <Text style={[styles.cardBody, { marginBottom: 12 }]}>
           Bypasses the normal forward-only flow — the only way to reopen a cancelled deal, revert a stage, or un-complete a deal. Does NOT
           re-trigger automation for the new stage (no WhatsApp, no document generation, no TrustIn/escrow calls) — use the tools above afterwards
-          if the new stage needs any of that.
+          if the new stage needs any of that. Moving to an earlier stage automatically resets the verification flag(s) that stage requires (e.g.
+          KYC-complete, signed, funds-confirmed), so the deal can't silently skip back past it — you'll still need to manually share the affected
+          party the relevant link (see Links card above) since no notification is sent automatically.
         </Text>
         <View style={{ gap: 10 }}>
           <Select label="Target stage" selectedValue={forceStageTarget} onValueChange={setForceStageTarget}>

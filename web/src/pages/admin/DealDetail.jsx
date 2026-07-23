@@ -705,7 +705,9 @@ export default function AdminDealDetail() {
         <p className="text-sm text-white/50 mb-4">
           Bypasses the normal forward-only flow — the only way to reopen a cancelled deal, revert a stage, or un-complete a deal. Does NOT
           re-trigger automation for the new stage (no WhatsApp, no document generation, no TrustIn/escrow calls) — use the tools above afterwards
-          if the new stage needs any of that.
+          if the new stage needs any of that. Moving to an <em>earlier</em> stage automatically resets the verification flag(s) that stage
+          requires (e.g. KYC-complete, signed, funds-confirmed), so the deal can't silently skip back past it — you'll still need to manually
+          send the affected party the relevant link (see Links card above) since no notification is sent automatically.
         </p>
         <form onSubmit={submitForceStage} className="flex flex-col gap-3">
           <Select label="Target stage" value={forceStageTarget} onChange={(e) => setForceStageTarget(e.target.value)}>
