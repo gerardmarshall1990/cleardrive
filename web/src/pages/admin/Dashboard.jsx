@@ -10,6 +10,11 @@ import { STAGE_LABELS, STAGE_ORDER } from '../../lib/dealStages';
 import { formatAed } from '../../lib/feeCalculator';
 import { api } from '../../lib/api';
 
+function vehicleTitle(deal) {
+  const parts = [deal.year, deal.make, deal.model].filter(Boolean);
+  return parts.length ? parts.join(' ') : null;
+}
+
 export default function AdminDashboard() {
   const [stats, setStats] = useState(null);
   const [deals, setDeals] = useState(null);
@@ -79,7 +84,13 @@ export default function AdminDashboard() {
                     <ProductBadge product={deal.product} />
                     {deal.stuck && <Badge variant="error">Stuck</Badge>}
                   </div>
-                  <p className="mt-1 text-sm text-white/50">{deal.plate}</p>
+                  {vehicleTitle(deal) ? (
+                    <p className="mt-1 text-sm text-white/70">
+                      {vehicleTitle(deal)} <span className="text-white/40">· {deal.plate}</span>
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-sm text-white/50">{deal.plate}</p>
+                  )}
                 </div>
                 <Badge variant="pending">{STAGE_LABELS[deal.status] || deal.status}</Badge>
               </div>

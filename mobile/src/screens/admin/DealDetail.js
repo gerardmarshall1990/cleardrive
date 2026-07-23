@@ -12,6 +12,11 @@ import { formatAed } from '../../lib/feeCalculator';
 import { api } from '../../lib/api';
 import { colors, fonts } from '../../theme/theme';
 
+function vehicleTitle(deal) {
+  const parts = [deal.year, deal.make, deal.model].filter(Boolean);
+  return parts.length ? parts.join(' ') : null;
+}
+
 // Manual-override toggles — mirror backend/controllers/adminController.js's
 // OVERRIDABLE_FIELDS. Used to unblock deals while TrustIn KYC / SignNow
 // signing / Claude Vision fines extraction aren't yet live integrations (or
@@ -105,7 +110,11 @@ export default function AdminDealDetail({ route }) {
         <ProductBadge product={deal.product} />
         {deal.stuck && <Badge variant="error">Stuck</Badge>}
       </View>
-      <Text style={styles.plate}>{deal.plate}</Text>
+      {vehicleTitle(deal) ? (
+        <Text style={styles.plate}>{vehicleTitle(deal)} · {deal.plate}</Text>
+      ) : (
+        <Text style={styles.plate}>{deal.plate}</Text>
+      )}
 
       <ProgressSteps currentStage={deal.status} accent={accent} />
 
@@ -124,6 +133,17 @@ export default function AdminDealDetail({ route }) {
       )}
 
       <DarkCard style={{ marginTop: 16 }}>
+        <Text style={styles.cardTitle}>Vehicle</Text>
+        <Row label="Plate" value={deal.plate || '—'} />
+        <Row label="VIN" value={deal.vin || '—'} mono />
+        <Row label="Make / Model" value={[deal.make, deal.model].filter(Boolean).join(' ') || '—'} />
+        <Row label="Year" value={deal.year || '—'} />
+        <Row label="Colour" value={deal.colour || '—'} />
+        <Row label="Mileage" value={deal.mileage ? `${Number(deal.mileage).toLocaleString('en-AE')} km` : '—'} />
+        <Row label="Emirate" value={deal.emirate || '—'} />
+      </DarkCard>
+
+      <DarkCard style={{ marginTop: 12 }}>
         <Text style={styles.cardTitle}>Deal summary</Text>
         <Row label="Sale price" value={formatAed(deal.sale_price)} />
         {deal.product === 'loanclear' && <Row label="Loan amount" value={formatAed(deal.loan_amount)} />}

@@ -12,6 +12,11 @@ import { formatAed } from '../../lib/feeCalculator';
 import { api } from '../../lib/api';
 import { colors, fonts } from '../../theme/theme';
 
+function vehicleTitle(deal) {
+  const parts = [deal.year, deal.make, deal.model].filter(Boolean);
+  return parts.length ? parts.join(' ') : null;
+}
+
 export default function AdminDashboard({ navigation }) {
   const [stats, setStats] = useState(null);
   const [deals, setDeals] = useState(null);
@@ -96,7 +101,7 @@ export default function AdminDashboard({ navigation }) {
                     <ProductBadge product={deal.product} />
                     {deal.stuck && <Badge variant="error">Stuck</Badge>}
                   </View>
-                  <Text style={styles.plate}>{deal.plate}</Text>
+                  <Text style={styles.plate}>{vehicleTitle(deal) ? `${vehicleTitle(deal)} · ${deal.plate}` : deal.plate}</Text>
                 </View>
                 <Badge variant="pending">{STAGE_LABELS[deal.status] || deal.status}</Badge>
               </View>

@@ -11,6 +11,11 @@ import { STAGE_ORDER, STAGE_LABELS, stageIndex } from '../../lib/dealStages';
 import { formatAed } from '../../lib/feeCalculator';
 import { api } from '../../lib/api';
 
+function vehicleTitle(deal) {
+  const parts = [deal.year, deal.make, deal.model].filter(Boolean);
+  return parts.length ? parts.join(' ') : null;
+}
+
 // Manual-override toggles — mirror backend/controllers/adminController.js's
 // OVERRIDABLE_FIELDS. Used to unblock deals while TrustIn KYC / SignNow
 // signing / Claude Vision fines extraction aren't yet live integrations (or
@@ -105,7 +110,13 @@ export default function AdminDealDetail() {
         <ProductBadge product={deal.product} />
         {deal.stuck && <Badge variant="error">Stuck</Badge>}
       </div>
-      <p className="text-sm text-white/40 mb-6">{deal.plate}</p>
+      {vehicleTitle(deal) ? (
+        <p className="text-sm text-white/60 mb-6">
+          {vehicleTitle(deal)} <span className="text-white/40">· {deal.plate}</span>
+        </p>
+      ) : (
+        <p className="text-sm text-white/40 mb-6">{deal.plate}</p>
+      )}
 
       <ProgressSteps currentStage={deal.status} accent={accent} />
 
@@ -126,6 +137,16 @@ export default function AdminDealDetail() {
       )}
 
       <div className="mt-6 grid gap-4 sm:grid-cols-2">
+        <DarkCard>
+          <h4 className="font-display text-base font-semibold text-white mb-3">Vehicle</h4>
+          <Row label="Plate" value={deal.plate || '—'} />
+          <Row label="VIN" value={deal.vin || '—'} mono />
+          <Row label="Make / Model" value={[deal.make, deal.model].filter(Boolean).join(' ') || '—'} />
+          <Row label="Year" value={deal.year || '—'} />
+          <Row label="Colour" value={deal.colour || '—'} />
+          <Row label="Mileage" value={deal.mileage ? `${Number(deal.mileage).toLocaleString('en-AE')} km` : '—'} />
+          <Row label="Emirate" value={deal.emirate || '—'} />
+        </DarkCard>
         <DarkCard>
           <h4 className="font-display text-base font-semibold text-white mb-3">Deal summary</h4>
           <Row label="Sale price" value={formatAed(deal.sale_price)} />
