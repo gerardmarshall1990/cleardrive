@@ -346,6 +346,8 @@ function DetailsCard({ deal, accent, onUpdate, onError }) {
   const [mulkiyaMsg, setMulkiyaMsg] = useState(null);
   const [settlementBusy, setSettlementBusy] = useState(false);
   const [settlementMsg, setSettlementMsg] = useState(null);
+  const [mulkiyaVerified, setMulkiyaVerified] = useState(false);
+  const [settlementVerified, setSettlementVerified] = useState(false);
 
   function set(field) {
     return (e) => setForm((f) => ({ ...f, [field]: e.target.value }));
@@ -373,9 +375,11 @@ function DetailsCard({ deal, accent, onUpdate, onError }) {
         year: data.year || f.year,
         colour: data.colour || f.colour,
       }));
+      setMulkiyaVerified(true);
       setMulkiyaMsg({ ok: true, text: 'Extracted from your Mulkiya — check the fields below and edit anything that looks wrong before saving.' });
     } catch (err) {
-      setMulkiyaMsg({ ok: false, text: `${err.message} — enter vehicle details manually below.` });
+      setMulkiyaVerified(false);
+      setMulkiyaMsg({ ok: false, text: `${err.message} — please try uploading the Mulkiya again.` });
     } finally {
       setMulkiyaBusy(false);
       e.target.value = '';
@@ -401,9 +405,11 @@ function DetailsCard({ deal, accent, onUpdate, onError }) {
         loan_account: data.loanReferenceNumber || f.loan_account,
         loan_bank: data.bankName || f.loan_bank,
       }));
+      setSettlementVerified(true);
       setSettlementMsg({ ok: true, text: 'Extracted from your bank settlement letter — this is the authoritative payoff figure. Review and edit if needed, then save.' });
     } catch (err) {
-      setSettlementMsg({ ok: false, text: `${err.message} — enter the settlement amount manually below.` });
+      setSettlementVerified(false);
+      setSettlementMsg({ ok: false, text: `${err.message} — please try uploading the settlement letter again.` });
     } finally {
       setSettlementBusy(false);
       e.target.value = '';
@@ -412,8 +418,10 @@ function DetailsCard({ deal, accent, onUpdate, onError }) {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    setLoading(true);
     onError('');
+    if (!mulkiyaVerified) return onError('Please upload the Mulkiya (vehicle registration card) before continuing.');
+    if (deal.product === 'loanclear' && !settlementVerified) return onError('Please upload the bank settlement letter before continuing.');
+    setLoading(true);
     try {
       if (!deal.buyer_id) {
         if (!buyerPhone.trim()) throw new Error('Buyer phone is required — the buyer must sign up first');
@@ -433,13 +441,21 @@ function DetailsCard({ deal, accent, onUpdate, onError }) {
     <DarkCard>
       <h4 className="font-display text-lg font-semibold text-white mb-4">Vehicle & financial details</h4>
 
-      <UploadDropzone label="Upload Mulkiya (vehicle registration card) to autofill vehicle details" busy={mulkiyaBusy} onFile={handleMulkiyaFile} />
-      {mulkiyaMsg && (mulkiyaMsg.ok ? <p className="mt-2 text-xs text-green">{mulkiyaMsg.text}</p> : <ErrorBanner message={mulkiyaMsg.text} />)}
+      <UploadDropzone label="Upload Mulkiya (vehicle registration card) — required" busy={mulkiyaBusy} onFile={handleMulkiyaFile} />
+      {mulkiyaVerified ? (
+        <p className="mt-2 text-xs text-green">✓ Mulkiya uploaded and verified</p>
+      ) : (
+        mulkiyaMsg && <ErrorBanner message={mulkiyaMsg.text} />
+      )}
 
       {deal.product === 'loanclear' && (
         <div className="mt-4">
-          <UploadDropzone label="Upload bank settlement letter to autofill the loan payoff amount" busy={settlementBusy} onFile={handleSettlementFile} />
-          {settlementMsg && (settlementMsg.ok ? <p className="mt-2 text-xs text-green">{settlementMsg.text}</p> : <ErrorBanner message={settlementMsg.text} />)}
+          <UploadDropzone label="Upload bank settlement letter — required" busy={settlementBusy} onFile={handleSettlementFile} />
+          {settlementVerified ? (
+            <p className="mt-2 text-xs text-green">✓ Settlement letter uploaded and verified</p>
+          ) : (
+            settlementMsg && <ErrorBanner message={settlementMsg.text} />
+          )}
         </div>
       )}
 

@@ -521,8 +521,10 @@ function DetailsCard({ deal, accent, onUpdate, onError }) {
   const [loading, setLoading] = useState(false);
   const [mulkiyaBusy, setMulkiyaBusy] = useState(false);
   const [mulkiyaMsg, setMulkiyaMsg] = useState(null);
+  const [mulkiyaVerified, setMulkiyaVerified] = useState(false);
   const [settlementBusy, setSettlementBusy] = useState(false);
   const [settlementMsg, setSettlementMsg] = useState(null);
+  const [settlementVerified, setSettlementVerified] = useState(false);
 
   function set(field, value) {
     setForm((f) => ({ ...f, [field]: value }));
@@ -558,9 +560,11 @@ function DetailsCard({ deal, accent, onUpdate, onError }) {
         year: data.year || f.year,
         colour: data.colour || f.colour,
       }));
+      setMulkiyaVerified(true);
       setMulkiyaMsg({ ok: true, text: 'Extracted from your Mulkiya — check the fields below and edit anything that looks wrong before saving.' });
     } catch (err) {
-      setMulkiyaMsg({ ok: false, text: `${err.message} — enter vehicle details manually below.` });
+      setMulkiyaVerified(false);
+      setMulkiyaMsg({ ok: false, text: `${err.message} — please try uploading the Mulkiya again.` });
     } finally {
       setMulkiyaBusy(false);
     }
@@ -593,17 +597,21 @@ function DetailsCard({ deal, accent, onUpdate, onError }) {
         loan_account: data.loanReferenceNumber || f.loan_account,
         loan_bank: data.bankName || f.loan_bank,
       }));
+      setSettlementVerified(true);
       setSettlementMsg({ ok: true, text: 'Extracted from your bank settlement letter — this is the authoritative payoff figure. Review and edit if needed, then save.' });
     } catch (err) {
-      setSettlementMsg({ ok: false, text: `${err.message} — enter the settlement amount manually below.` });
+      setSettlementVerified(false);
+      setSettlementMsg({ ok: false, text: `${err.message} — please try uploading the settlement letter again.` });
     } finally {
       setSettlementBusy(false);
     }
   }
 
   async function handleSubmit() {
-    setLoading(true);
     onError('');
+    if (!mulkiyaVerified) return onError('Please upload the Mulkiya (vehicle registration card) before continuing.');
+    if (deal.product === 'loanclear' && !settlementVerified) return onError('Please upload the bank settlement letter before continuing.');
+    setLoading(true);
     try {
       if (!deal.buyer_id) {
         if (!buyerPhone.trim()) throw new Error('Buyer phone is required — the buyer must sign up first');
@@ -624,20 +632,28 @@ function DetailsCard({ deal, accent, onUpdate, onError }) {
       <Text style={[styles.cardTitle, { marginBottom: 12 }]}>Vehicle & financial details</Text>
 
       <UploadDropzone
-        label="Upload Mulkiya (vehicle registration card) to autofill vehicle details"
+        label="Upload Mulkiya (vehicle registration card) — required"
         busy={mulkiyaBusy}
         onPick={handleMulkiyaFile}
       />
-      {mulkiyaMsg && (mulkiyaMsg.ok ? <Text style={styles.savedMsg}>{mulkiyaMsg.text}</Text> : <ErrorBanner message={mulkiyaMsg.text} />)}
+      {mulkiyaVerified ? (
+        <Text style={styles.savedMsg}>✓ Mulkiya uploaded and verified</Text>
+      ) : (
+        mulkiyaMsg && <ErrorBanner message={mulkiyaMsg.text} />
+      )}
 
       {deal.product === 'loanclear' && (
         <View style={{ marginTop: 14 }}>
           <UploadDropzone
-            label="Upload bank settlement letter to autofill the loan payoff amount"
+            label="Upload bank settlement letter — required"
             busy={settlementBusy}
             onPick={handleSettlementFile}
           />
-          {settlementMsg && (settlementMsg.ok ? <Text style={styles.savedMsg}>{settlementMsg.text}</Text> : <ErrorBanner message={settlementMsg.text} />)}
+          {settlementVerified ? (
+            <Text style={styles.savedMsg}>✓ Settlement letter uploaded and verified</Text>
+          ) : (
+            settlementMsg && <ErrorBanner message={settlementMsg.text} />
+          )}
         </View>
       )}
 
