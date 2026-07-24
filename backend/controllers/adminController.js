@@ -465,7 +465,16 @@ async function forceStage(req, res) {
   if (error || !deal) return res.status(404).json({ error: 'Deal not found' });
   if (deal.status === targetStage) return res.status(400).json({ error: 'Deal is already in that stage' });
 
-  const isBackward = stageIndex(targetStage) !== -1 && stageIndex(targetStage) < stageIndex(deal.status);
+  // stageIndex(CANCELLED) is -1 (CANCELLED is deliberately excluded from
+  // STAGE_ORDER), so a plain index comparison never flags "reopening a
+  // cancelled deal" as backward — yet that's one of this endpoint's three
+  // named use cases (see JSDoc above), and a deal can be cancelled at any
+  // point up to TASJEEL with stale verification flags still true. Treat
+  // reopening from CANCELLED as always backward so the target stage's
+  // gating flags get the same safety reset as any other backward move.
+  const previousIndex = stageIndex(deal.status);
+  const targetIndex = stageIndex(targetStage);
+  const isBackward = deal.status === STAGES.CANCELLED || (targetIndex !== -1 && previousIndex !== -1 && targetIndex < previousIndex);
   const resetFields = isBackward ? STAGE_RESET_FIELDS[targetStage] || {} : {};
 
   const { data: updated, error: updateErr } = await supabaseAdmin
