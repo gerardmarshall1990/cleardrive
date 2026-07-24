@@ -34,8 +34,8 @@ export default function Welcome() {
         <button onClick={() => handleProductClick('safepay')} className="text-left">
           <div className="h-full rounded-2xl border-t-[3px] border-green border-x border-b border-white/9 bg-white/4 p-6 transition-all hover:-translate-y-0.5 hover:shadow-[0_8px_24px_rgba(22,163,74,0.2)]">
             <h3 className="font-display text-2xl font-bold text-green">SafePay</h3>
-            <p className="mt-1 text-sm font-semibold text-white/70">Any private car sale</p>
-            <p className="mt-3 text-sm text-white/50">Secure escrow for any sale AED 100,000+.</p>
+            <p className="mt-1 text-sm font-semibold text-white/70">Any private sale, no loan</p>
+            <p className="mt-3 text-sm text-white/50">Secure escrow for private sales with no existing loan, AED 100,000+.</p>
             <div className="mt-6">
               <span className="inline-flex items-center justify-center rounded-lg bg-green px-7 py-3.5 text-[15px] font-bold text-white shadow-[0_4px_14px_rgba(22,163,74,0.25)]">
                 Get Started →

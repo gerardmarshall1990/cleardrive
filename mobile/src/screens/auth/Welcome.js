@@ -22,8 +22,8 @@ export default function Welcome({ navigation }) {
         <Pressable onPress={() => navigation.navigate('Signup', { product: 'safepay' })}>
           <View style={[styles.card, { borderTopColor: colors.green }]}>
             <Text style={[styles.cardTitle, { color: colors.green }]}>SafePay</Text>
-            <Text style={styles.cardSubtitle}>Any private car sale</Text>
-            <Text style={styles.cardBody}>Secure escrow for any sale AED 100,000+.</Text>
+            <Text style={styles.cardSubtitle}>Any private sale, no loan</Text>
+            <Text style={styles.cardBody}>Secure escrow for private sales with no existing loan, AED 100,000+.</Text>
             <View style={[styles.cta, { backgroundColor: colors.green }]}>
               <Text style={[styles.ctaText, { color: '#fff' }]}>Get Started →</Text>
             </View>
