@@ -5,7 +5,7 @@ import { DarkCard } from '../../components/Card';
 import { SkeletonCard } from '../../components/Skeleton';
 import { EmptyState } from '../../components/EmptyState';
 import { Badge, ProductBadge } from '../../components/Badge';
-import { Select } from '../../components/Input';
+import { Select, Input } from '../../components/Input';
 import { ErrorBanner } from '../../components/Alert';
 import { STAGE_LABELS, STAGE_ORDER } from '../../lib/dealStages';
 import { formatAed } from '../../lib/feeCalculator';
@@ -17,11 +17,19 @@ function vehicleTitle(deal) {
   return parts.length ? parts.join(' ') : null;
 }
 
+function formatDealDate(isoString) {
+  if (!isoString) return null;
+  return new Date(isoString).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
 export default function AdminDashboard({ navigation }) {
   const [stats, setStats] = useState(null);
   const [deals, setDeals] = useState(null);
   const [status, setStatus] = useState('');
   const [product, setProduct] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [search, setSearch] = useState('');
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -32,13 +40,15 @@ export default function AdminDashboard({ navigation }) {
     const params = new URLSearchParams();
     if (status) params.set('status', status);
     if (product) params.set('product', product);
+    if (fromDate) params.set('fromDate', fromDate);
+    if (toDate) params.set('toDate', toDate);
     const qs = params.toString();
     setDeals(null);
     api
       .get(`/api/admin/deals${qs ? `?${qs}` : ''}`)
       .then((res) => setDeals(res.deals))
       .catch((err) => setError(err.message));
-  }, [status, product]);
+  }, [status, product, fromDate, toDate]);
 
   useEffect(() => {
     loadDeals();
@@ -50,10 +60,18 @@ export default function AdminDashboard({ navigation }) {
     }, [loadDeals])
   );
 
+  // Search is client-side (ref/plate/vehicle) since the list endpoint already
+  // returns every matching deal with no pagination — no need for a round trip.
+  const visibleDeals = deals?.filter((deal) => {
+    if (!search.trim()) return true;
+    const haystack = [deal.ref, deal.plate, deal.make, deal.model, String(deal.year || '')].filter(Boolean).join(' ').toLowerCase();
+    return haystack.includes(search.trim().toLowerCase());
+  });
+
   return (
     <View style={styles.screen}>
       <FlatList
-        data={deals || []}
+        data={visibleDeals || []}
         keyExtractor={(d) => d.id}
         contentContainerStyle={styles.list}
         ListHeaderComponent={
@@ -80,6 +98,15 @@ export default function AdminDashboard({ navigation }) {
                 <Select.Item label="LoanClear" value="loanclear" />
                 <Select.Item label="SafePay" value="safepay" />
               </Select>
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                <View style={{ flex: 1 }}>
+                  <Input label="From date" placeholder="YYYY-MM-DD" value={fromDate} onChangeText={setFromDate} autoCapitalize="none" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Input label="To date" placeholder="YYYY-MM-DD" value={toDate} onChangeText={setToDate} autoCapitalize="none" />
+                </View>
+              </View>
+              <Input label="Search" placeholder="Ref, plate, make, model..." value={search} onChangeText={setSearch} autoCapitalize="none" />
             </View>
 
             {deals === null && (
@@ -87,6 +114,9 @@ export default function AdminDashboard({ navigation }) {
                 <SkeletonCard />
                 <SkeletonCard />
               </View>
+            )}
+            {deals?.length > 0 && visibleDeals?.length === 0 && (
+              <EmptyState icon="🔍" title="No deals match your search" subtitle="Try a different search term." />
             )}
             {deals?.length === 0 && <EmptyState icon="📁" title="No deals found" subtitle="Try adjusting the filters above." />}
           </>
@@ -102,6 +132,7 @@ export default function AdminDashboard({ navigation }) {
                     {deal.stuck && <Badge variant="error">Stuck</Badge>}
                   </View>
                   <Text style={styles.plate}>{vehicleTitle(deal) ? `${vehicleTitle(deal)} · ${deal.plate}` : deal.plate}</Text>
+                  {formatDealDate(deal.created_at) && <Text style={styles.createdAt}>Created {formatDealDate(deal.created_at)}</Text>}
                 </View>
                 <Badge variant="pending">{STAGE_LABELS[deal.status] || deal.status}</Badge>
               </View>
@@ -138,6 +169,7 @@ const styles = StyleSheet.create({
   rowTop: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   ref: { fontFamily: fonts.display, fontSize: 17, fontWeight: 'bold', color: colors.white },
   plate: { fontFamily: fonts.sans, fontSize: 13, color: colors.white50, marginTop: 4 },
+  createdAt: { fontFamily: fonts.sans, fontSize: 11, color: colors.white40, marginTop: 2 },
   muted: { fontFamily: fonts.sans, fontSize: 13, color: colors.white40 },
   value: { fontFamily: fonts.sansSemiBold, fontSize: 13, color: colors.white },
   stuckCard: { borderColor: 'rgba(239,68,68,0.4)' },

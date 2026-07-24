@@ -234,13 +234,23 @@ function diagnoseBlockers(deal) {
   return missing.map((field) => ({ field, label: FIELD_LABELS[field] || `${field} missing` }));
 }
 
-/** GET /api/admin/deals — all deals, most recent first, with a "stuck" flag. */
+/**
+ * GET /api/admin/deals — all deals, most recent first, with a "stuck" flag.
+ * fromDate/toDate (YYYY-MM-DD) filter on created_at — toDate is inclusive of
+ * the whole day, since a plain date has no time component.
+ */
 async function getAllDeals(req, res) {
-  const { status, product } = req.query;
+  const { status, product, fromDate, toDate } = req.query;
 
   let query = supabaseAdmin.from('deals').select('*').order('created_at', { ascending: false });
   if (status) query = query.eq('status', status);
   if (product) query = query.eq('product', product);
+  if (fromDate) query = query.gte('created_at', new Date(fromDate).toISOString());
+  if (toDate) {
+    const endOfDay = new Date(toDate);
+    endOfDay.setUTCHours(23, 59, 59, 999);
+    query = query.lte('created_at', endOfDay.toISOString());
+  }
 
   const { data: deals, error } = await query;
   if (error) return res.status(500).json({ error: 'Could not load deals — please try again' });
